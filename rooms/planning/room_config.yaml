@@ -1,0 +1,16 @@
+id: "planning"
+name: "Goal Planner & Executor"
+description: "Break down complex goals into steps, execute sequentially, and synthesize results"
+suggestions:
+  - "Research the top 3 benefits of microservices architecture and summarize them"
+  - "Plan a strategy to learn a new programming language in 30 days"
+  - "Create a step-by-step guide for setting up a home automation system"
+  - "Analyze the pros and cons of remote work and provide recommendations"
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.planning_factory.create_planning_agent"
+  with_agent_config: true
+  extra_config:
+    max_steps: 5
+    allow_replan: true
+allow_mcp: false

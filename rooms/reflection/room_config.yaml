@@ -1,0 +1,13 @@
+id: "reflection"
+name: "Content Refiner"
+description: "Iterative content generation with automated critique and improvement (producer-critic pattern)"
+suggestions:
+  - "Write a tweet about the future of AI agents"
+  - "Draft a product description for noise-canceling headphones"
+  - "Create a one-paragraph company mission statement for a sustainable fashion brand"
+  - "Write a haiku about debugging code at 3am"
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.reflection_factory.create_reflection_agent"
+  with_agent_config: true
+allow_mcp: false

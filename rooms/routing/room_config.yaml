@@ -1,0 +1,13 @@
+id: "routing"
+name: "Customer Service Router"
+description: "Intent classification and routing to specialized handlers (order status, product info, tech support, clarification)"
+suggestions:
+  - "Where is my order ORD-12345?"
+  - "What features does the Pro model have?"
+  - "My device won't turn on after the update"
+  - "I need help with something"
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.routing_factory.create_routing_agent"
+  with_agent_config: true
+allow_mcp: false

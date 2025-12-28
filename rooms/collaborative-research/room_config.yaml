@@ -1,0 +1,20 @@
+id: "collaborative-research"
+name: "Collaborative Research Partner"
+description: "Interactive research assistant that plans, asks for your feedback, and then executes parallel research."
+suggestions:
+  - "Research the current state of Solid State Batteries"
+  - "Analyze the geopolitical implications of Arctic ice melting"
+  - "Compare the top 3 Javascript frameworks for 2025"
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.research_factory.create_research_agent"
+  with_agent_config: true
+  extra_config:
+    max_plan_steps: 5
+
+mcp_client_toolsets:
+  exa:
+    kind: http
+    url: "https://mcp.exa.ai/mcp"
+    query_params:
+      exaApiKey: "secret:EXA_API_KEY"

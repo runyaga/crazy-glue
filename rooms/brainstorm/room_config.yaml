@@ -1,0 +1,29 @@
+id: "brainstorm"
+name: "Brainstorm Arena"
+description: "4 AI personas generate ideas in parallel, then vote on the best ones"
+welcome_message: |
+  Welcome to the Brainstorm Arena!
+
+  Enter any challenge or problem, and watch four AI brainstormers attack it from different angles:
+
+  - **Practical Pete** - Realistic, actionable ideas
+  - **Wild Card Wendy** - Creative, unconventional thinking
+  - **Contrarian Carl** - Challenges assumptions, reverse thinking
+  - **Analytical Alex** - Data-driven, optimization-focused
+
+  After generating ideas, they vote on each other's suggestions to surface the best ones.
+
+suggestions:
+  - "Ways to make morning commutes more enjoyable"
+  - "How to stay focused while working from home"
+  - "Creative uses for empty office buildings"
+  - "Ideas for reducing food waste at restaurants"
+  - "Ways to make exercise more fun for people who hate gyms"
+  - "How to make online meetings less boring"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.brainstorm_factory.create_brainstorm_agent"
+  with_agent_config: true
+  extra_config:
+    num_voters: 4

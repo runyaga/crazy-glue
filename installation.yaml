@@ -1,0 +1,26 @@
+id: "crazy-glue-patterns"
+
+secrets:
+  - "EXA_API_KEY"
+
+environment:
+  - "OLLAMA_BASE_URL"
+  - "LOGFIRE_TOKEN"
+  - "EXA_API_KEY"
+  - "SOLIPLEX_INSTALLATION_PATH"
+  - name: "INSTALLATION_PATH"
+    value: "file:."
+
+agent_configs:
+  - id: "default_chat"
+    model_name: "gpt-oss:latest"
+    system_prompt: |
+      You are an AI assistant demonstrating agentic design patterns.
+      Be helpful, clear, and concise.
+
+room_paths:
+  - "./rooms"
+
+thread_persistence_dburi:
+  sync: "sqlite://"
+  async: "sqlite+aiosqlite://"

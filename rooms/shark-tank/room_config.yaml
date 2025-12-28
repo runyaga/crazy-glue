@@ -1,0 +1,34 @@
+id: "shark-tank"
+name: "Shark Tank"
+description: "Pitch your startup to 4 AI sharks who analyze and decide whether to invest"
+welcome_message: |
+  Welcome to the Shark Tank! 🦈
+
+  Pitch your startup idea and face our panel of sharks:
+
+  - **🎯 Marina Market** - The Market Maven (obsesses over TAM and timing)
+  - **🔧 Trevor Tech** - The Tech Titan (evaluates technical defensibility)
+  - **💰 Morgan Money** - The Money Mogul (focuses on unit economics)
+  - **⚠️ Rita Risk** - The Risk Ranger (identifies threats and red flags)
+
+  Each shark will analyze your pitch in their area of expertise, then decide whether to invest!
+
+  **How it works:**
+  1. 📋 Your pitch is broken down into key areas
+  2. 🔍 All 4 sharks analyze simultaneously
+  3. 💵 Each shark makes their investment decision
+  4. 🏆 Final verdict: Funded or No Deal!
+
+suggestions:
+  - "An app that matches dog owners for neighborhood playdates"
+  - "AI-powered personal stylist that works with your existing wardrobe"
+  - "Subscription service for locally-sourced office snacks"
+  - "Platform connecting retirees with startups for mentorship"
+  - "Smart trash can that automatically sorts recycling"
+  - "Peer-to-peer parking spot rental in urban areas"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.shark_tank_factory.create_shark_tank_agent"
+  with_agent_config: true
+  extra_config: {}

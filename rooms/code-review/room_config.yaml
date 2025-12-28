@@ -1,0 +1,29 @@
+id: "code-review"
+name: "Code Review Dojo"
+description: "Watch a junior developer write code and a senior reviewer iterate until approval"
+welcome_message: |
+  Welcome to the Code Review Dojo!
+
+  Describe a coding task, and watch the review process unfold:
+
+  1. **Junior Developer** writes an initial implementation
+  2. **Senior Reviewer** provides detailed feedback
+  3. Junior revises based on feedback
+  4. Iterate until approved (or max rounds reached)
+
+  Great for learning code review patterns and seeing how code evolves through feedback.
+
+suggestions:
+  - "Write a function to validate email addresses"
+  - "Create a rate limiter class with a sliding window"
+  - "Implement a simple LRU cache"
+  - "Write a function to find all anagrams in a list of words"
+  - "Create a retry decorator with exponential backoff"
+  - "Implement a basic pub/sub event system"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.code_review_factory.create_code_review_agent"
+  with_agent_config: true
+  extra_config:
+    max_rounds: 3

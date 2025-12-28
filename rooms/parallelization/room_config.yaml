@@ -1,0 +1,27 @@
+id: "parallelization"
+name: "Parallel Processing"
+description: "Three concurrent execution strategies: /sectioning (divide work), /voting (consensus), /mapreduce (aggregate)"
+welcome_message: |
+  Choose a parallelization strategy:
+
+  **/sectioning** Topic: Section1, Section2, Section3
+  Divides work into parallel sections, then synthesizes results.
+
+  **/voting** Your question here?
+  Runs multiple agents in parallel and aggregates by majority vote.
+
+  **/mapreduce** doc1:text|doc2:text|doc3:text
+  Maps documents to parallel summarizers, then reduces to combined summary.
+suggestions:
+  - "/sectioning Quantum Computing: History, Current State, Future Applications"
+  - "/voting Is functional programming better than OOP for concurrent systems?"
+  - "/mapreduce report1:Sales increased 20% in Q3|report2:New product launch successful|report3:Customer satisfaction at all-time high"
+  - "/sectioning Climate Change: Causes, Effects, Solutions"
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.parallelization_factory.create_parallelization_agent"
+  with_agent_config: true
+  extra_config:
+    default_strategy: "sectioning"
+    num_voters: 3
+allow_mcp: false

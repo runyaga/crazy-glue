@@ -1,0 +1,31 @@
+id: "debate"
+name: "Debate Arena"
+description: "Watch two AI agents debate any topic with a judge scoring each round"
+welcome_message: |
+  Welcome to the Debate Arena!
+
+  Enter any topic or question, and watch two AI debaters argue opposing sides.
+
+  - **PRO (Advocate)** argues IN FAVOR
+  - **CON (Challenger)** argues AGAINST
+  - **Judge** scores each round 1-10
+
+  Example topics:
+  - "Pineapple belongs on pizza"
+  - "Remote work is better than office work"
+  - "AI will create more jobs than it destroys"
+
+suggestions:
+  - "Pineapple belongs on pizza"
+  - "Tabs are better than spaces for code indentation"
+  - "AI will be a net positive for humanity"
+  - "Social media does more harm than good"
+  - "Electric vehicles are ready to replace gas cars"
+  - "The moon landing was worth the cost"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.debate_factory.create_debate_agent"
+  with_agent_config: true
+  extra_config:
+    num_rounds: 3

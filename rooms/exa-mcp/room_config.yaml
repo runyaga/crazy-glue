@@ -1,0 +1,20 @@
+id: "exa-mcp"
+name: "Exa MCP Test"
+description: "Test room to verify Exa API connectivity via MCP"
+suggestions:
+  - "Search for recent news about AI agents"
+  - "Find articles about solid state batteries"
+  - "Search for Python web frameworks 2025"
+agent:
+  model_name: "gpt-oss:20b"
+  system_prompt: |
+    You are a helpful research assistant with access to Exa web search.
+    Use the web_search_exa tool to find information for the user.
+    Always cite your sources with URLs.
+
+mcp_client_toolsets:
+  exa:
+    kind: http
+    url: "https://mcp.exa.ai/mcp"
+    query_params:
+      exaApiKey: "secret:EXA_API_KEY"

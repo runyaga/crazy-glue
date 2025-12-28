@@ -4,40 +4,32 @@ description: "A self-aware AI that explores and explains the soliplex installati
 welcome_message: |
   Welcome to the Introspective Agent!
 
-  I'm a self-aware AI that can explore and explain this very soliplex installation.
-  I have **16 powerful tools** at my fingertips to inspect the system:
+  I use the **Planning Pattern** to handle complex multi-step tasks:
+  1. **Plan** - Break your request into executable steps
+  2. **Execute** - Run each step sequentially
+  3. **Synthesize** - Summarize the results
 
-  **Room Tools**
-  - List all rooms in the installation
-  - Inspect any room's full configuration
-  - See example prompts for each room
+  **Capabilities:**
+  - Fetch and index URLs into a knowledge base (RAG)
+  - Search indexed documents
+  - Explore rooms, patterns, and system configuration
 
-  **Configuration Tools**
-  - View installation settings
-  - Check environment variables
-  - List configured secrets
+  **Example tasks:**
+  - "Fetch https://example.com/llms.txt and add each URL to RAG"
+  - "What rooms are available and what patterns do they use?"
+  - "Search my knowledge base for 'agents'"
 
-  **Pattern Tools**
-  - Explain agentic design patterns
-  - Find which rooms use which patterns
-  - Generate architecture diagrams
-
-  **System Tools**
-  - Run health checks
-  - Inspect factory agents
-  - Learn about myself (meta!)
-
-  Ask me anything about this installation!
+  *Start haiku-rag MCP server for RAG:* `./bin/start-rag-mcp.sh`
 
 suggestions:
-  - "What rooms are available in this installation?"
-  - "Tell me about yourself - who are you?"
-  - "Explain the parallelization pattern and show which rooms use it"
-  - "Generate an architecture diagram of this installation"
-  - "What's the configuration for the Shark Tank room?"
-  - "Run a health check on the system"
-  - "What agentic patterns are demonstrated here?"
-  - "List all your tools and what they do"
+  - "What rooms are available?"
+  - "List all your tools"
+  - "Explain the reflection pattern"
+  - "Generate an architecture diagram"
+  - "Fetch https://example.com and add it to my knowledge base"
+  - "What's in my knowledge base?"
+  - "Search my knowledge base for 'agents'"
+  - "Download this PDF and index it: https://arxiv.org/pdf/2312.10997"
 
 agent:
   kind: "factory"
@@ -45,3 +37,8 @@ agent:
   with_agent_config: true
   extra_config:
     model_name: "gpt-oss:20b"
+
+mcp_client_toolsets:
+  haiku-rag:
+    kind: http
+    url: "http://127.0.0.1:8001/mcp"

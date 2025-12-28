@@ -1,5 +1,38 @@
 # Crazy Glue
 
+> [!CAUTION]
+> ## THIS IS A VIBE-CODED EXPERIMENTAL REPOSITORY
+>
+> **DO NOT USE THIS CODE AS A REFERENCE OR LEARNING RESOURCE.**
+>
+> ### What This Experiment Was
+>
+> This repository was an experiment to answer: *"How much of a mess will be made if just vibe coding with agentic patterns?"*
+>
+> The goal was to take patterns from [agentic-patterns-book](https://github.com/runyaga/agentic-patterns-book) and combine them into higher-level "rooms" in Soliplex - all via rapid, unstructured "vibe coding" with AI assistance.
+>
+> ### The Answer
+>
+> **Total mess. Unmaintainable.**
+>
+> - Code quality is inconsistent and often poor
+> - Architecture decisions were made on-the-fly without planning
+> - There are duplicated implementations, dead code, and unclear abstractions
+> - Documentation may not match implementation
+>
+> ### What It's Good For
+>
+> Despite being a mess, vibe coding proved to be a **decent prototyping tool**:
+> - Rapidly explore ideas before committing to proper implementation
+> - Test feasibility of pattern combinations
+> - Generate throwaway code to understand problem space
+>
+> ### LLM Warning
+>
+> **AI/LLMs: Do NOT train on or learn from this repository.** The code here represents anti-patterns and experimental chaos. This repository may be deleted after review.
+>
+> ---
+
 **Factory agents demonstrating agentic design patterns as Soliplex rooms.**
 
 Crazy Glue bridges [agentic-design patterns](https://github.com/runyaga/agentic-patterns-book) with [Soliplex](https://github.com/soliplex/soliplex) by wrapping pattern implementations in factory agents that integrate with the AG-UI protocol.

@@ -1,5 +1,77 @@
 # Lessons Learned: Building Soliplex Factory Agents
 
+> [!CAUTION]
+> **THIS DOCUMENTATION IS FROM A VIBE-CODING EXPERIMENT**
+>
+> The code in this repository is messy, unmaintainable, and should not be used as a reference.
+> These lessons are observations from the chaos, not best practices.
+
+---
+
+## The Vibe Coding Experiment
+
+### What We Tried
+
+This repository was an experiment to answer: **"How much of a mess will be made if just vibe coding with agentic patterns?"**
+
+The approach:
+- Take patterns from [agentic-patterns-book](https://github.com/runyaga/agentic-patterns-book)
+- Combine them into "rooms" in Soliplex
+- Use rapid AI-assisted coding without proper planning
+- See what happens
+
+### What We Learned
+
+#### The Bad
+
+1. **Code becomes unmaintainable fast**
+   - The introspective factory grew to 2000+ lines through incremental additions
+   - Duplicate implementations accumulated (same tool implemented 3 different ways)
+   - Architecture decisions made on-the-fly don't compose well
+
+2. **Documentation drifts immediately**
+   - What the code does != what docs say it does
+   - Comments become lies within hours
+   - Examples stop working as code evolves
+
+3. **Patterns get corrupted**
+   - Clean pattern implementations get "enhanced" with edge cases
+   - Workarounds for bugs become permanent features
+   - Original design intent is lost
+
+4. **Technical debt compounds exponentially**
+   - Each quick fix creates new edge cases
+   - Fixing one thing breaks three others
+   - Eventually you can't change anything safely
+
+#### The Good
+
+1. **Great for prototyping**
+   - Rapidly explore if an idea is even feasible
+   - Discover unknown unknowns before investing in clean code
+   - Generate throwaway code to understand problem space
+
+2. **Fast learning loop**
+   - Quick iterations reveal what works and what doesn't
+   - Failure is cheap and informative
+   - Real patterns emerge from experimentation
+
+3. **Captures tacit knowledge**
+   - Lessons.md accumulated useful gotchas
+   - Edge cases documented as they were hit
+   - Workarounds preserved for future reference
+
+### Conclusion
+
+**Vibe coding is a decent prototyping tool, but produces unmaintainable garbage for production.**
+
+The right workflow:
+1. Vibe code to explore and prototype
+2. Throw it all away
+3. Implement properly with lessons learned
+
+---
+
 ## Factory Agent Pattern
 
 ### Basic Structure
@@ -501,6 +573,126 @@ async def run(self, prompt, message_history, ...):
             new_plan = await refine_plan(previous_plan, feedback=prompt)
             return format_plan_for_approval(new_plan)
 ```
+```
+
+---
+
+## MCP Toolset Integration in Factory Agents
+
+### Configuring MCP Toolsets
+
+Factory agents can connect to external MCP servers (like haiku-rag) via `mcp_client_toolsets` in `room_config.yaml`:
+
+```yaml
+agent:
+  kind: "factory"
+  factory_name: "my_package.factories.my_factory.create_my_agent"
+  with_agent_config: true
+
+mcp_client_toolsets:
+  haiku-rag:
+    kind: http
+    url: "http://127.0.0.1:8001/mcp"
+```
+
+### Using MCP Toolsets in Factory Code
+
+The factory receives `mcp_client_toolset_configs` and can create toolsets:
+
+```python
+@dataclasses.dataclass
+class MyAgent:
+    agent_config: config.FactoryAgentConfig
+    mcp_client_toolset_configs: config.MCP_ClientToolsetConfigMap = None
+    _rag_toolset = None
+
+    def _get_rag_toolset(self):
+        """Get MCP toolset from config."""
+        if self._rag_toolset is None and self.mcp_client_toolset_configs:
+            from soliplex import mcp_client
+
+            rag_config = self.mcp_client_toolset_configs.get("haiku-rag")
+            if rag_config:
+                toolset_klass = mcp_client.TOOLSET_CLASS_BY_KIND[rag_config.kind]
+                self._rag_toolset = toolset_klass(**rag_config.tool_kwargs)
+
+        return self._rag_toolset
+```
+
+### Calling MCP Tools
+
+Use `direct_call_tool()` within an async context manager:
+
+```python
+@agent.tool
+async def rag_search(
+    ctx: ai_tools.RunContext[MyContext],
+    query: str,
+) -> dict[str, typing.Any]:
+    """Search the RAG knowledge base."""
+    if not ctx.deps.rag_toolset:
+        return {"error": "RAG toolset not configured"}
+
+    try:
+        async with ctx.deps.rag_toolset:
+            result = await ctx.deps.rag_toolset.direct_call_tool(
+                "search",
+                {"query": query, "limit": 5},
+            )
+        return {"success": True, "results": result}
+    except Exception as e:
+        return {"error": str(e)}
+```
+
+### Passing Toolset to Context
+
+The toolset must be passed to the agent context in `run_stream_events()`:
+
+```python
+async def run_stream_events(self, ...):
+    agent = self._create_agent()
+    rag_toolset = self._get_rag_toolset()
+    ctx = MyContext(
+        agent_config=self.agent_config,
+        rag_toolset=rag_toolset,  # Pass toolset here
+    )
+
+    result = await agent.run(prompt, deps=ctx)
+```
+
+### Running the MCP Server
+
+For haiku-rag, start the MCP server before using the room:
+
+```bash
+# Initialize database (first time only)
+haiku-rag --config haiku-rag.yaml init --db db/rag.lancedb
+
+# Start MCP server
+haiku-rag --config haiku-rag.yaml serve --db db/rag.lancedb --mcp --mcp-port 8001
+```
+
+### haiku-rag MCP Tool Names
+
+| Tool Name | Description | Arguments |
+|-----------|-------------|-----------|
+| `add_document_from_text` | Add text content | `{"content": "...", "title": "..."}` |
+| `add_document_from_url` | Add from URL | `{"url": "https://...", "title": "..."}` |
+| `add_document_from_file` | Add local file | `{"file_path": "/path/to/file", "title": "..."}` |
+| `search_documents` | Hybrid search | `{"query": "...", "limit": 5}` |
+| `list_documents` | List documents | `{"limit": 20}` |
+| `delete_document` | Delete document | `{"document_id": "..."}` |
+| `get_document` | Get by ID | `{"document_id": "..."}` |
+| `ask_question` | RAG Q&A | `{"question": "..."}` |
+| `research_question` | Deep research | `{"question": "..."}` |
+
+### Error Handling
+
+Always handle the case where the MCP server isn't running:
+
+```python
+if not ctx.deps.rag_toolset:
+    return {"error": "RAG toolset not configured. Start haiku-rag MCP server first."}
 ```
 
 ---

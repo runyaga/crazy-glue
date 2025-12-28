@@ -13,5 +13,8 @@ wheels/
 # MkDocs
 site/
 
+# haiku-rag database
+db/
+
 # macOS
 .DS_Store

@@ -54,8 +54,18 @@ pip install -e . -e ./agentic-design -e ./soliplex
 ## Running the Server
 
 ```bash
-soliplex-cli serve .
+soliplex-cli serve . --no-auth-mode
 ```
+
+### Connecting to the Server
+
+**Option 1: Python TUI (recommended)**
+
+```bash
+soliplex-tui --url http://127.0.0.1:8000
+```
+
+**Option 2: Web browser**
 
 Open `http://localhost:8000` in your browser. Select a room from the sidebar.
 
@@ -85,8 +95,8 @@ flowchart TD
 
 ## Testing a Room
 
-1. Start the server: `soliplex-cli serve .`
-2. Navigate to `http://localhost:8000`
+1. Start the server: `soliplex-cli serve . --no-auth-mode`
+2. Connect via TUI: `soliplex-tui --url http://127.0.0.1:8000`
 3. Select "Shark Tank" from the room list
 4. Enter a startup pitch: "An app that connects dog owners for neighborhood playdates"
 5. Watch the sharks analyze and decide

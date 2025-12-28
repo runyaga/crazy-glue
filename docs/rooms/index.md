@@ -132,10 +132,14 @@ flowchart LR
 
 1. Start the server:
    ```bash
-   soliplex-cli serve .
+   soliplex-cli serve . --no-auth-mode
    ```
 
-2. Open `http://localhost:8000`
+2. Connect via TUI (recommended):
+   ```bash
+   soliplex-tui --url http://127.0.0.1:8000
+   ```
+   Or open `http://localhost:8000` in browser
 
 3. Select a room from the sidebar
 

@@ -142,9 +142,12 @@ cd crazy-glue
 pip install -e . -e ./agentic-design -e ./soliplex
 
 # Run the server
-soliplex-cli serve .
+soliplex-cli serve . --no-auth-mode
 
-# Open http://localhost:8000 and select a room
+# Connect via TUI (recommended)
+soliplex-tui --url http://127.0.0.1:8000
+
+# Or open http://localhost:8000 in browser
 ```
 
 See [Getting Started](getting-started.md) for detailed setup.

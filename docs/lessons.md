@@ -697,6 +697,65 @@ if not ctx.deps.rag_toolset:
 
 ---
 
+## AG-UI Event Lifecycle Rule
+
+### The Golden Rule
+
+**If you emit a START event, you MUST emit a corresponding END event.**
+
+This applies to all AG-UI paired events:
+- `PartStartEvent` → `PartEndEvent`
+- `TEXT_MESSAGE_START` → `TEXT_MESSAGE_END`
+- `TOOL_CALL_START` → `TOOL_CALL_END`
+- `THINKING_START` → `THINKING_END`
+- `STEP_STARTED` → `STEP_FINISHED`
+- `RUN_STARTED` → `RUN_FINISHED` (or `RUN_ERROR`)
+
+### Common Pitfalls
+
+1. **Index mismatch**: PartDeltaEvent must target the same index as the PartStartEvent
+2. **Conditional returns**: Ensure all code paths end started parts
+3. **Loop iterations**: Don't reuse part indices across loop iterations for different parts
+4. **Unhandled exceptions**: Async operations (agent.run, asyncio.gather) can throw, bypassing PartEndEvent
+
+### Known Issues in Factory Agents
+
+The following factories have unhandled exceptions that can bypass `PartEndEvent`:
+
+| Factory | Location | Risk |
+|---------|----------|------|
+| shark_tank_factory.py | Lines 214, 285, 399 | planner.run() and asyncio.gather() can throw |
+| research_factory.py | Line 371 | asyncio.gather() can throw |
+| introspective_factory.py | Line 1876 | synthesizer.run() can throw |
+
+These need try-except blocks to ensure AG-UI event lifecycle completes on error.
+
+### Correct Pattern
+
+```python
+# Start thinking part at known index
+think_part = ai_messages.ThinkingPart("...")
+yield ai_messages.PartStartEvent(index=0, part=think_part)
+
+# Deltas ALWAYS target index 0 (the think_part)
+for item in items:
+    yield ai_messages.PartDeltaEvent(
+        index=0,  # Always 0 for think_part
+        delta=ai_messages.ThinkingPartDelta(content_delta=f"...")
+    )
+
+    # Tool calls get incrementing indices
+    part_index += 1
+    tc_part = ai_messages.ToolCallPart(tool_name="...")
+    yield ai_messages.PartStartEvent(index=part_index, part=tc_part)
+    yield ai_messages.PartEndEvent(index=part_index, part=tc_part)
+
+# End thinking part at index 0
+yield ai_messages.PartEndEvent(index=0, part=think_part)
+```
+
+---
+
 ## Future Improvements
 
 1. Fix `compute_state_delta` to use `add` for new keys instead of `replace`

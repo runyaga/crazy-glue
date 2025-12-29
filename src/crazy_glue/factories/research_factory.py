@@ -373,13 +373,13 @@ class ResearchAgent:
             for step, results in zip(session.plan, results_list):
                 if isinstance(results, Exception):
                     yield ai_messages.PartDeltaEvent(
-                        index=part_index,
+                        index=0,  # think_part is at index 0
                         delta=ai_messages.ThinkingPartDelta(content_delta=f"\n! Search failed for: {step.query} - {results}"),
                     )
                     research_data.append({"query": step.query, "results": []})
                 else:
                     yield ai_messages.PartDeltaEvent(
-                        index=part_index,
+                        index=0,  # think_part is at index 0
                         delta=ai_messages.ThinkingPartDelta(content_delta=f"\n+ Found {len(results)} results for: {step.query}"),
                     )
                     research_data.append({"query": step.query, "results": results})

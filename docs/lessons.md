@@ -697,6 +697,180 @@ if not ctx.deps.rag_toolset:
 
 ---
 
+## AG-UI Event Lifecycle Rule
+
+### The Golden Rule
+
+**If you emit a START event, you MUST emit a corresponding END event.**
+
+This applies to all AG-UI paired events:
+- `PartStartEvent` → `PartEndEvent`
+- `TEXT_MESSAGE_START` → `TEXT_MESSAGE_END`
+- `TOOL_CALL_START` → `TOOL_CALL_END`
+- `THINKING_START` → `THINKING_END`
+- `STEP_STARTED` → `STEP_FINISHED`
+- `RUN_STARTED` → `RUN_FINISHED` (or `RUN_ERROR`)
+
+### Common Pitfalls
+
+1. **Index mismatch**: PartDeltaEvent must target the same index as the PartStartEvent
+2. **Conditional returns**: Ensure all code paths end started parts
+3. **Loop iterations**: Don't reuse part indices across loop iterations for different parts
+4. **Unhandled exceptions**: Async operations (agent.run, asyncio.gather) can throw, bypassing PartEndEvent
+
+### Known Issues in Factory Agents
+
+The following factories have unhandled exceptions that can bypass `PartEndEvent`:
+
+| Factory | Location | Risk |
+|---------|----------|------|
+| shark_tank_factory.py | Lines 214, 285, 399 | planner.run() and asyncio.gather() can throw |
+| research_factory.py | Line 371 | asyncio.gather() can throw |
+| introspective_factory.py | Line 1876 | synthesizer.run() can throw |
+
+These need try-except blocks to ensure AG-UI event lifecycle completes on error.
+
+### Correct Pattern
+
+```python
+# Start thinking part at known index
+think_part = ai_messages.ThinkingPart("...")
+yield ai_messages.PartStartEvent(index=0, part=think_part)
+
+# Deltas ALWAYS target index 0 (the think_part)
+for item in items:
+    yield ai_messages.PartDeltaEvent(
+        index=0,  # Always 0 for think_part
+        delta=ai_messages.ThinkingPartDelta(content_delta=f"...")
+    )
+
+    # Tool calls get incrementing indices
+    part_index += 1
+    tc_part = ai_messages.ToolCallPart(tool_name="...")
+    yield ai_messages.PartStartEvent(index=part_index, part=tc_part)
+    yield ai_messages.PartEndEvent(index=part_index, part=tc_part)
+
+# End thinking part at index 0
+yield ai_messages.PartEndEvent(index=0, part=think_part)
+```
+
+---
+
+## Dependency Injection for External Pattern Libraries
+
+### The Problem
+
+When integrating external pattern libraries (like `agentic-patterns`) with Soliplex, you
+encounter a configuration mismatch:
+
+1. **External libraries** have their own model defaults (e.g., `get_fast_model()`,
+   `get_strong_model()`) that read from environment variables
+2. **Soliplex** manages model configuration through `InstallationConfig` and room YAML files
+3. **Result**: External patterns use wrong models because they can't see Soliplex's config
+
+### The Solution: Factory Function Injection
+
+Refactor external libraries to accept models via factory functions:
+
+```python
+# In agentic-patterns library
+def create_generator_agent(model: Model | None = None) -> Agent:
+    """Create generator with optional model override."""
+    return Agent(
+        model or get_fast_model(),  # Fallback to library default
+        system_prompt=GENERATOR_PROMPT,
+        ...
+    )
+
+async def run_best_of_n(
+    problem: ProblemStatement,
+    n: int = 5,
+    *,
+    generator: Agent | None = None,  # Accept pre-configured agents
+    evaluator: Agent | None = None,
+) -> BestOfNResult:
+    ...
+```
+
+### Using in Soliplex Factories
+
+The Soliplex factory creates models using installation config, then injects them:
+
+```python
+@dataclasses.dataclass
+class ThoughtCandidatesAgent:
+    agent_config: config.FactoryAgentConfig
+    _fast_model: typing.Any = dataclasses.field(default=None, repr=False)
+    _strong_model: typing.Any = dataclasses.field(default=None, repr=False)
+
+    @property
+    def fast_model_name(self) -> str:
+        """Model name from room config - no hardcoded defaults."""
+        return self.agent_config.extra_config["fast_model_name"]
+
+    @property
+    def strong_model_name(self) -> str:
+        return self.agent_config.extra_config["strong_model_name"]
+
+    def _get_fast_model(self):
+        if self._fast_model is None:
+            installation = self.agent_config._installation_config
+            base_url = installation.get_environment("OLLAMA_BASE_URL")
+            provider = ollama_providers.OllamaProvider(
+                base_url=f"{base_url}/v1",
+            )
+            self._fast_model = openai_models.OpenAIChatModel(
+                model_name=self.fast_model_name,
+                provider=provider,
+            )
+        return self._fast_model
+
+    async def run_stream_events(self, ...):
+        result = await run_best_of_n(
+            problem,
+            n=self.num_candidates,
+            generator=create_generator_agent(self._get_fast_model()),
+            evaluator=create_evaluator_agent(self._get_strong_model()),
+        )
+```
+
+### Room Configuration
+
+Models are configured in `room_config.yaml`, not hardcoded in Python:
+
+```yaml
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.thought_candidates_factory.create_thought_candidates_agent"
+  with_agent_config: true
+  extra_config:
+    # Model configuration - required, no defaults
+    fast_model_name: "qwen3:4b"      # Fast model for generation
+    strong_model_name: "qwen3:8b"    # Strong model for evaluation
+
+    # Pattern-specific config
+    num_candidates: 5
+    max_words: 100
+```
+
+### Key Principles
+
+1. **No hardcoded model defaults in factory code** - All model names come from YAML config
+2. **External libraries use factory functions** - Accept `Model | None` with internal defaults
+3. **Soliplex factories create models** - Using `_installation_config.get_environment()`
+4. **Inject at call site** - Pass configured agents/models to library functions
+5. **Support multiple model tiers** - Fast models for generation, strong for evaluation
+
+### Benefits
+
+- **Separation of concerns**: Library doesn't know about Soliplex, Soliplex doesn't
+  hardcode model names
+- **Flexibility**: Each room can use different models
+- **Testability**: Factory functions accept mocks easily
+- **Backward compatibility**: Libraries still work standalone with their defaults
+
+---
+
 ## Future Improvements
 
 1. Fix `compute_state_delta` to use `add` for new keys instead of `replace`
@@ -706,3 +880,4 @@ if not ctx.deps.rag_toolset:
 5. Allow parser to accept STATE_SNAPSHOT in FINISHED state (for final state)
 6. Add real-time tool call streaming via `agent.iter()` support
 7. Provide public accessor for `_installation_config` (currently private API)
+8. Consider adding model tier configs at installation level for common defaults

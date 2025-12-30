@@ -15,9 +15,7 @@ from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
 from pydantic_ai.models import openai as openai_models
 from pydantic_ai.providers import ollama as ollama_providers
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]
@@ -192,7 +190,7 @@ class SharkTankAgent:
         think_part = ai_messages.ThinkingPart(f"Shark Tank: {pitch[:40]}...")
         yield ai_messages.PartStartEvent(index=0, part=think_part)
 
-        transcript = [f"# 🦈 Shark Tank\n\n"]
+        transcript = ["# 🦈 Shark Tank\n\n"]
         transcript.append(f"**The Pitch:** {pitch}\n\n")
 
         # ========== PHASE 1: PLANNING ==========
@@ -281,7 +279,7 @@ class SharkTankAgent:
             return shark_key, result.output
 
         # Run all analyses in parallel
-        analysis_tasks = [analyze_pitch(key) for key in SHARKS.keys()]
+        analysis_tasks = [analyze_pitch(key) for key in SHARKS]
         analyses = dict(await asyncio.gather(*analysis_tasks))
 
         # Update activity with all analyses
@@ -320,10 +318,10 @@ class SharkTankAgent:
             shark = SHARKS[shark_key]
             transcript.append(f"### {shark['emoji']} {shark['name']} ({shark['title']})\n\n")
             transcript.append(f"**Excitement Level:** {'🔥' * analysis.excitement_level}{'⚪' * (10 - analysis.excitement_level)} ({analysis.excitement_level}/10)\n\n")
-            transcript.append(f"**Strengths:**\n")
+            transcript.append("**Strengths:**\n")
             for s in analysis.strengths:
                 transcript.append(f"- {s}\n")
-            transcript.append(f"\n**Concerns:**\n")
+            transcript.append("\n**Concerns:**\n")
             for c in analysis.concerns:
                 transcript.append(f"- {c}\n")
             transcript.append(f"\n*\"{analysis.summary}\"*\n\n")
@@ -337,7 +335,7 @@ class SharkTankAgent:
         # ========== PHASE 3: INVESTMENT DECISIONS (PARALLEL) ==========
         if emitter:
             sharks_deciding = {}
-            for shark_key in SHARKS.keys():
+            for shark_key in SHARKS:
                 shark = SHARKS[shark_key]
                 analysis = analyses[shark_key]
                 sharks_deciding[shark_key] = {
@@ -395,7 +393,7 @@ class SharkTankAgent:
             return shark_key, result.output
 
         # Run all decisions in parallel
-        decision_tasks = [make_decision(key) for key in SHARKS.keys()]
+        decision_tasks = [make_decision(key) for key in SHARKS]
         decisions = dict(await asyncio.gather(*decision_tasks))
 
         transcript.append("---\n\n## 💵 Investment Decisions\n\n")

@@ -7,17 +7,14 @@ import typing
 import uuid
 from collections import abc
 
-from pydantic_ai import messages as ai_messages
-from pydantic_ai import run as ai_run
-from pydantic_ai import tools as ai_tools
-
 from agentic_patterns.routing import Intent
 from agentic_patterns.routing import RouteDecision
 from agentic_patterns.routing import RouteResponse
 from agentic_patterns.routing import route_query
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from pydantic_ai import messages as ai_messages
+from pydantic_ai import run as ai_run
+from pydantic_ai import tools as ai_tools
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]

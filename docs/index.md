@@ -39,7 +39,7 @@ Crazy Glue bridges [agentic-design patterns](https://github.com/runyaga/agentic-
 
 ## What This Is
 
-A collection of **9 interactive rooms** that demonstrate agentic AI patterns:
+A collection of **11 interactive rooms** that demonstrate agentic AI patterns:
 
 ```mermaid
 flowchart LR
@@ -49,6 +49,8 @@ flowchart LR
         PL[Planning]
         PA[Parallelization]
         TU[Tool Use]
+        TC[Thought Candidates 17a]
+        ToT[Tree of Thoughts 17b]
     end
 
     subgraph "Crazy Glue Factories"
@@ -61,6 +63,8 @@ flowchart LR
         F7[code_review_factory]
         F8[shark_tank_factory]
         F9[introspective_factory]
+        F10[thought_candidates_factory]
+        F11[tree_of_thoughts_factory]
     end
 
     subgraph "Soliplex Rooms"
@@ -73,6 +77,8 @@ flowchart LR
         RM7[Code Review Dojo]
         RM8[Shark Tank]
         RM9[Introspective]
+        RM10[Thought Candidates]
+        RM11[Tree of Thoughts]
     end
 
     R --> F1 --> RM1
@@ -85,6 +91,8 @@ flowchart LR
     PL --> F8
     PA --> F8 --> RM8
     TU --> F9 --> RM9
+    TC --> F10 --> RM10
+    ToT --> F11 --> RM11
 ```
 
 ## Rooms Overview
@@ -100,6 +108,8 @@ flowchart LR
 | [Code Review Dojo](rooms/code-review.md) | Reflection | Junior-Senior code review cycles |
 | [Shark Tank](rooms/shark-tank.md) | Planning + Parallelization + Voting | Pitch to AI investors |
 | [Introspective Agent](rooms/introspective.md) | Tool Use | Self-aware AI that explores the installation |
+| [Thought Candidates](rooms/thought-candidates.md) | Thought Candidates (17a) | Best-of-N sampling with parallel evaluation |
+| [Tree of Thoughts](rooms/tree-of-thoughts.md) | Tree of Thoughts (17b) | Multi-level beam search with pruning |
 
 ## Architecture
 
@@ -173,12 +183,16 @@ crazy-glue/
 ├── rooms/                          # Room configurations
 │   ├── routing/room_config.yaml
 │   ├── reflection/room_config.yaml
+│   ├── thought-candidates/room_config.yaml  # 17a Best-of-N
+│   ├── tree-of-thoughts/room_config.yaml    # 17b Tree exploration
 │   └── ...
 ├── src/crazy_glue/
 │   ├── __init__.py
 │   └── factories/                  # Factory agent implementations
 │       ├── routing_factory.py
 │       ├── reflection_factory.py
+│       ├── thought_candidates_factory.py    # 17a
+│       ├── tree_of_thoughts_factory.py      # 17b
 │       └── ...
 ├── agentic-design/                 # Submodule: pattern implementations
 ├── soliplex/                       # Submodule: room framework

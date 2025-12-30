@@ -72,4 +72,6 @@ nav:
       - Code Review Dojo: rooms/code-review.md
       - Shark Tank: rooms/shark-tank.md
       - Introspective Agent: rooms/introspective.md
+      - Thought Candidates: rooms/thought-candidates.md
+      - Tree of Thoughts: rooms/tree-of-thoughts.md
   - Lessons Learned: lessons.md

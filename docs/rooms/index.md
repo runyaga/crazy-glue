@@ -1,6 +1,6 @@
 # Rooms Overview
 
-Crazy Glue provides 9 interactive rooms demonstrating agentic design patterns.
+Crazy Glue provides 11 interactive rooms demonstrating agentic design patterns.
 
 ## Room Catalog
 
@@ -15,6 +15,8 @@ flowchart TB
     subgraph "Reasoning Patterns"
         RF[Reflection]
         PL[Planning]
+        TC[Thought Candidates]
+        ToT[Tree of Thoughts]
     end
 
     subgraph "Composite Rooms"
@@ -32,21 +34,24 @@ flowchart TB
     PL --> ST
     PA --> ST
     TU --> IN
+    TC --> |"Extends"| ToT
 ```
 
 ## Pattern Matrix
 
-| Room | Routing | Reflection | Planning | Parallelization | Tool Use | Voting |
-|------|:-------:|:----------:|:--------:|:---------------:|:--------:|:------:|
-| [Router](routing.md) | X | | | | | |
-| [Reflection Lab](reflection.md) | | X | | | | |
-| [Planning](planning.md) | | | X | | | |
-| [Parallelization](parallelization.md) | | | | X | | |
-| [Debate](debate.md) | | | | X | | |
-| [Brainstorm Arena](brainstorm.md) | | | | X | | X |
-| [Code Review Dojo](code-review.md) | | X | | | | |
-| [Shark Tank](shark-tank.md) | | | X | X | | X |
-| [Introspective Agent](introspective.md) | | | | | X | |
+| Room | Routing | Reflection | Planning | Parallelization | Tool Use | Voting | Best-of-N | ToT |
+|------|:-------:|:----------:|:--------:|:---------------:|:--------:|:------:|:---------:|:---:|
+| [Router](routing.md) | X | | | | | | | |
+| [Reflection Lab](reflection.md) | | X | | | | | | |
+| [Planning](planning.md) | | | X | | | | | |
+| [Parallelization](parallelization.md) | | | | X | | | | |
+| [Debate](debate.md) | | | | X | | | | |
+| [Brainstorm Arena](brainstorm.md) | | | | X | | X | | |
+| [Code Review Dojo](code-review.md) | | X | | | | | | |
+| [Shark Tank](shark-tank.md) | | | X | X | | X | | |
+| [Introspective Agent](introspective.md) | | | | | X | | | |
+| [Thought Candidates](thought-candidates.md) | | | | X | | | X | |
+| [Tree of Thoughts](tree-of-thoughts.md) | | | | X | | | X | X |
 
 ## Quick Reference
 
@@ -95,6 +100,16 @@ flowchart TB
 **Purpose**: Self-aware AI that explores and explains the installation
 **Best for**: Learning how soliplex works, debugging configuration
 
+### Thought Candidates
+**Pattern**: Thought Candidates (17a - Best-of-N)
+**Purpose**: Generate multiple candidate solutions, evaluate, and select the best
+**Best for**: Problems with multiple valid solutions, improving over single-shot
+
+### Tree of Thoughts
+**Pattern**: Tree of Thoughts (17b - Multi-level Exploration)
+**Purpose**: Deep reasoning with beam search and pruning
+**Best for**: Diagnostic reasoning, complex planning, problems where greedy fails
+
 ## Complexity Progression
 
 Start simple and progress to more complex rooms:
@@ -113,10 +128,12 @@ flowchart LR
         D[Debate]
         B[Brainstorm]
         CR[Code Review]
+        TC[Thought Candidates]
     end
 
     subgraph "Level 3: Composite"
         ST[Shark Tank]
+        ToT[Tree of Thoughts]
     end
 
     R --> D
@@ -126,6 +143,7 @@ flowchart LR
     PL --> ST
     D --> ST
     B --> ST
+    TC --> ToT
 ```
 
 ## Running Rooms

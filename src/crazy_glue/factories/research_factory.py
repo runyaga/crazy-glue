@@ -16,9 +16,7 @@ from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
 from pydantic_ai.models import openai as openai_models
 from pydantic_ai.providers import ollama as ollama_providers
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]
@@ -329,7 +327,7 @@ class ResearchAgent:
                 yield ai_messages.PartEndEvent(index=part_index, part=think_part)
 
                 response_text = (
-                    f"## Revised Research Plan\n\n"
+                    "## Revised Research Plan\n\n"
                     + "\n".join([f"{s.step_number}. **{s.query}**\n   _{s.description}_" for s in session.plan])
                     + "\n\n**Does this look better?**"
                     + session.to_json_block()
@@ -373,13 +371,13 @@ class ResearchAgent:
             for step, results in zip(session.plan, results_list):
                 if isinstance(results, Exception):
                     yield ai_messages.PartDeltaEvent(
-                        index=part_index,
+                        index=0,  # think_part is at index 0
                         delta=ai_messages.ThinkingPartDelta(content_delta=f"\n! Search failed for: {step.query} - {results}"),
                     )
                     research_data.append({"query": step.query, "results": []})
                 else:
                     yield ai_messages.PartDeltaEvent(
-                        index=part_index,
+                        index=0,  # think_part is at index 0
                         delta=ai_messages.ThinkingPartDelta(content_delta=f"\n+ Found {len(results)} results for: {step.query}"),
                     )
                     research_data.append({"query": step.query, "results": results})

@@ -1,5 +1,7 @@
 # Crazy Glue
 
+📖 **[Documentation](https://runyaga.github.io/crazy-glue/)**
+
 > [!CAUTION]
 > ## THIS IS A VIBE-CODED EXPERIMENTAL REPOSITORY
 >
@@ -44,7 +46,7 @@ The code here represents anti-patterns and experimental chaos, not best practice
 
 ## What Was Built (Before It Became Chaos)
 
-9 interactive rooms demonstrating agentic AI patterns:
+11 interactive rooms demonstrating agentic AI patterns:
 
 | Room | Pattern(s) | Description |
 |------|------------|-------------|
@@ -57,6 +59,46 @@ The code here represents anti-patterns and experimental chaos, not best practice
 | Code Review Dojo | Reflection | Junior-Senior code review cycles |
 | Shark Tank | Planning + Parallelization + Voting | Pitch to AI investors |
 | Introspective Agent | Tool Use + Planning + Learning | Self-aware AI with RAG and memory |
+| Thought Candidates | Thought Candidates (17a) | Best-of-N sampling with parallel evaluation |
+| Tree of Thoughts | Tree of Thoughts (17b) | Multi-level beam search with pruning |
+
+## Running Soliplex
+
+### Prerequisites
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Ensure packages are installed
+pip install -e . -e ./agentic-design -e ./soliplex
+```
+
+### Start the Server
+
+```bash
+soliplex-cli serve . --no-auth-mode
+```
+
+Server runs on http://127.0.0.1:8000 by default. Use `--port 8001` for a different port.
+
+### Connect via Terminal UI
+
+```bash
+soliplex-tui --url http://127.0.0.1:8000
+```
+
+### API Endpoints
+
+- `GET /api/v1/rooms` - List all available rooms
+- `GET /api/v1/rooms/{room_id}` - Get room details
+- WebSocket connections for real-time agent interaction
+
+### Configuration
+
+- `installation.yaml` - Soliplex configuration (room paths, secrets, agent configs)
+- `rooms/` - Room configurations (each room has a `room_config.yaml`)
+- `.env` - Environment variables (OLLAMA_BASE_URL, API keys, etc.)
 
 ## Lessons Learned
 

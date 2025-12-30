@@ -50,15 +50,12 @@ import uuid
 from collections import abc
 
 import pydantic
+from agentic_patterns.reflection import ProducerOutput
+from agentic_patterns.reflection import run_reflection
 from pydantic_ai import messages as ai_messages
 from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
-
-from agentic_patterns.reflection import ProducerOutput
-from agentic_patterns.reflection import run_reflection
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]

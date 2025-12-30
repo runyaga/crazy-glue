@@ -6,7 +6,6 @@ import dataclasses
 import inspect
 import json
 import logging
-import os
 import tempfile
 import typing
 import uuid
@@ -26,17 +25,15 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-import pydantic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from pydantic import Field
 from pydantic_ai import Agent
 from pydantic_ai import messages as ai_messages
 from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
 from pydantic_ai.models import openai as openai_models
 from pydantic_ai.providers import ollama as ollama_providers
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]
@@ -328,7 +325,7 @@ class ToolSpec:
     implementation: typing.Callable[..., typing.Awaitable[dict[str, typing.Any]]]
 
 
-async def _tool_fetch_url_content(ctx: "IntrospectiveContext", url: str) -> dict[str, typing.Any]:
+async def _tool_fetch_url_content(ctx: IntrospectiveContext, url: str) -> dict[str, typing.Any]:
     """Fetch text/HTML content from a URL."""
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
@@ -339,7 +336,7 @@ async def _tool_fetch_url_content(ctx: "IntrospectiveContext", url: str) -> dict
         return {"error": str(e)}
 
 
-async def _tool_fetch_url_to_file(ctx: "IntrospectiveContext", url: str) -> dict[str, typing.Any]:
+async def _tool_fetch_url_to_file(ctx: IntrospectiveContext, url: str) -> dict[str, typing.Any]:
     """Download URL to a temporary file."""
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
@@ -354,7 +351,7 @@ async def _tool_fetch_url_to_file(ctx: "IntrospectiveContext", url: str) -> dict
         return {"error": str(e)}
 
 
-async def _tool_rag_info(ctx: "IntrospectiveContext") -> dict[str, typing.Any]:
+async def _tool_rag_info(ctx: IntrospectiveContext) -> dict[str, typing.Any]:
     """Get RAG system status and document count."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured. Start haiku-rag MCP server first."}
@@ -367,7 +364,7 @@ async def _tool_rag_info(ctx: "IntrospectiveContext") -> dict[str, typing.Any]:
         return {"error": str(e)}
 
 
-async def _tool_rag_add_url(ctx: "IntrospectiveContext", url: str, title: str | None = None) -> dict[str, typing.Any]:
+async def _tool_rag_add_url(ctx: IntrospectiveContext, url: str, title: str | None = None) -> dict[str, typing.Any]:
     """Index content from a URL into RAG."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured"}
@@ -379,7 +376,7 @@ async def _tool_rag_add_url(ctx: "IntrospectiveContext", url: str, title: str | 
         return {"error": str(e)}
 
 
-async def _tool_rag_add_file(ctx: "IntrospectiveContext", file_path: str, title: str | None = None) -> dict[str, typing.Any]:
+async def _tool_rag_add_file(ctx: IntrospectiveContext, file_path: str, title: str | None = None) -> dict[str, typing.Any]:
     """Index a local file into RAG."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured"}
@@ -391,7 +388,7 @@ async def _tool_rag_add_file(ctx: "IntrospectiveContext", file_path: str, title:
         return {"error": str(e)}
 
 
-async def _tool_rag_add_text(ctx: "IntrospectiveContext", content: str, title: str) -> dict[str, typing.Any]:
+async def _tool_rag_add_text(ctx: IntrospectiveContext, content: str, title: str) -> dict[str, typing.Any]:
     """Index text content into RAG."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured"}
@@ -403,7 +400,7 @@ async def _tool_rag_add_text(ctx: "IntrospectiveContext", content: str, title: s
         return {"error": str(e)}
 
 
-async def _tool_rag_search(ctx: "IntrospectiveContext", query: str, limit: int = 5) -> dict[str, typing.Any]:
+async def _tool_rag_search(ctx: IntrospectiveContext, query: str, limit: int = 5) -> dict[str, typing.Any]:
     """Search the RAG knowledge base."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured"}
@@ -415,7 +412,7 @@ async def _tool_rag_search(ctx: "IntrospectiveContext", query: str, limit: int =
         return {"error": str(e)}
 
 
-async def _tool_rag_list_documents(ctx: "IntrospectiveContext", limit: int = 20) -> dict[str, typing.Any]:
+async def _tool_rag_list_documents(ctx: IntrospectiveContext, limit: int = 20) -> dict[str, typing.Any]:
     """List documents in the RAG knowledge base."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured"}
@@ -427,7 +424,7 @@ async def _tool_rag_list_documents(ctx: "IntrospectiveContext", limit: int = 20)
         return {"error": str(e)}
 
 
-async def _tool_rag_delete_document(ctx: "IntrospectiveContext", document_id: str) -> dict[str, typing.Any]:
+async def _tool_rag_delete_document(ctx: IntrospectiveContext, document_id: str) -> dict[str, typing.Any]:
     """Delete a document from the RAG knowledge base."""
     if not ctx.rag_toolset:
         return {"error": "RAG toolset not configured"}
@@ -439,7 +436,7 @@ async def _tool_rag_delete_document(ctx: "IntrospectiveContext", document_id: st
         return {"error": str(e)}
 
 
-async def _tool_list_all_rooms(ctx: "IntrospectiveContext") -> dict[str, typing.Any]:
+async def _tool_list_all_rooms(ctx: IntrospectiveContext) -> dict[str, typing.Any]:
     """List all rooms in the installation."""
     installation = ctx.installation_config
     rooms = [
@@ -449,7 +446,7 @@ async def _tool_list_all_rooms(ctx: "IntrospectiveContext") -> dict[str, typing.
     return {"success": True, "rooms": sorted(rooms, key=lambda r: r["id"])}
 
 
-async def _tool_inspect_room(ctx: "IntrospectiveContext", room_id: str) -> dict[str, typing.Any]:
+async def _tool_inspect_room(ctx: IntrospectiveContext, room_id: str) -> dict[str, typing.Any]:
     """Get detailed configuration for a specific room."""
     installation = ctx.installation_config
     if room_id not in installation.room_configs:
@@ -458,7 +455,7 @@ async def _tool_inspect_room(ctx: "IntrospectiveContext", room_id: str) -> dict[
     return {"success": True, "id": room.id, "name": room.name, "description": room.description, "suggestions": room.suggestions}
 
 
-async def _tool_explain_pattern(ctx: "IntrospectiveContext", pattern_name: str) -> dict[str, typing.Any]:
+async def _tool_explain_pattern(ctx: IntrospectiveContext, pattern_name: str) -> dict[str, typing.Any]:
     """Explain an agentic pattern."""
     pattern_key = pattern_name.lower().replace(" ", "_")
     if pattern_key not in PATTERN_KNOWLEDGE:
@@ -466,7 +463,7 @@ async def _tool_explain_pattern(ctx: "IntrospectiveContext", pattern_name: str) 
     return {"success": True, **PATTERN_KNOWLEDGE[pattern_key]}
 
 
-async def _tool_list_patterns(ctx: "IntrospectiveContext") -> dict[str, typing.Any]:
+async def _tool_list_patterns(ctx: IntrospectiveContext) -> dict[str, typing.Any]:
     """List all known agentic patterns."""
     return {
         "success": True,
@@ -904,7 +901,7 @@ class IntrospectiveAgent:
         self,
         tool_name: str,
         tool_args: dict[str, typing.Any],
-        ctx: "IntrospectiveContext",
+        ctx: IntrospectiveContext,
         step_results: list[StepResult],
     ) -> dict[str, typing.Any]:
         """Execute a single tool by name using the tool registry."""
@@ -1663,7 +1660,7 @@ flowchart TB
         emitter = getattr(deps, "agui_emitter", None) if deps else None
         activity_id = str(uuid.uuid4())
 
-        logger.info(f"[INTROSPECTIVE] Starting run_stream_events")
+        logger.info("[INTROSPECTIVE] Starting run_stream_events")
         logger.info(f"[INTROSPECTIVE] Prompt: {prompt[:100]}...")
         logger.info(f"[INTROSPECTIVE] Emitter present: {emitter is not None}")
 
@@ -1735,7 +1732,7 @@ flowchart TB
             rag_context=rag_learning_context,
             memory_context=memory_context,
         )
-        logger.info(f"[INTROSPECTIVE] Created planner agent, calling run()")
+        logger.info("[INTROSPECTIVE] Created planner agent, calling run()")
         try:
             plan_result = await planner.run(f"Create a plan for: {prompt}")
             plan = plan_result.output
@@ -1744,7 +1741,7 @@ flowchart TB
                 logger.info(f"[INTROSPECTIVE]   Step {step.step_number}: {step.tool_name}({step.tool_args})")
         except Exception as e:
             logger.error(f"[INTROSPECTIVE] Planning failed: {e}")
-            logger.info(f"[INTROSPECTIVE] Falling back to simple agent execution")
+            logger.info("[INTROSPECTIVE] Falling back to simple agent execution")
             # Fallback: use the regular agent with tools instead of planning pattern
             yield ai_messages.PartEndEvent(index=0, part=think_part)
             agent = self._create_agent()
@@ -1851,7 +1848,7 @@ flowchart TB
                 activity_id,
             )
 
-        logger.info(f"[INTROSPECTIVE] Creating synthesizer agent")
+        logger.info("[INTROSPECTIVE] Creating synthesizer agent")
         synthesizer = self._create_synthesizer_agent()
 
         # Build synthesis prompt
@@ -1939,7 +1936,7 @@ Step Description: {original_step.description if original_step else 'N/A'}
 
             # Extract learnings from synthesis-identified issues (incomplete plans, partial success)
             if synthesis_indicates_issues and not failed_steps:
-                logger.info(f"[LEARNING] Extracting learnings from synthesis-identified issues")
+                logger.info("[LEARNING] Extracting learnings from synthesis-identified issues")
                 try:
                     extraction_prompt = f"""
 Goal: {plan.goal}
@@ -2024,9 +2021,9 @@ Category: {learning.task_category}"""
         memory_manager.save(memory)
         logger.info(f"[MEMORY] Saved conversation to memory ({len(memory.messages)} messages)")
 
-        logger.info(f"[EVENT] Yielding AgentRunResultEvent")
+        logger.info("[EVENT] Yielding AgentRunResultEvent")
         yield ai_run.AgentRunResultEvent(result=response)
-        logger.info(f"[INTROSPECTIVE] run_stream_events complete")
+        logger.info("[INTROSPECTIVE] run_stream_events complete")
 
 
 def create_introspective_agent(

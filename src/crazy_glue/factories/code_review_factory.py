@@ -14,9 +14,7 @@ from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
 from pydantic_ai.models import openai as openai_models
 from pydantic_ai.providers import ollama as ollama_providers
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]
@@ -217,7 +215,7 @@ class CodeReviewAgent:
                 }, activity_id)
 
             transcript.append(f"## Round {round_num}\n\n")
-            transcript.append(f"### ✍️ Junior Developer\n\n")
+            transcript.append("### ✍️ Junior Developer\n\n")
             transcript.append(f"```\n{current_submission.code}\n```\n\n")
             transcript.append(f"*{current_submission.explanation}*\n\n")
 
@@ -266,10 +264,10 @@ class CodeReviewAgent:
                     },
                 }, activity_id)
 
-            transcript.append(f"### 👀 Senior Reviewer\n\n")
+            transcript.append("### 👀 Senior Reviewer\n\n")
 
             if last_review.approved:
-                transcript.append(f"✅ **APPROVED**\n\n")
+                transcript.append("✅ **APPROVED**\n\n")
                 transcript.append(f"*{last_review.praise}*\n\n")
                 approved = True
 
@@ -280,11 +278,11 @@ class CodeReviewAgent:
                 )
                 break
             else:
-                transcript.append(f"🔄 **Needs Revision**\n\n")
-                transcript.append(f"**Issues:**\n")
+                transcript.append("🔄 **Needs Revision**\n\n")
+                transcript.append("**Issues:**\n")
                 for issue in last_review.issues:
                     transcript.append(f"- {issue}\n")
-                transcript.append(f"\n**Suggestions:**\n")
+                transcript.append("\n**Suggestions:**\n")
                 for suggestion in last_review.suggestions:
                     transcript.append(f"- {suggestion}\n")
                 transcript.append(f"\n**What's good:** {last_review.praise}\n\n")

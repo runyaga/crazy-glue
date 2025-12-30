@@ -1,0 +1,54 @@
+id: "thought-candidates"
+name: "Thought Candidates"
+description: "Generate multiple candidate solutions and pick the best (17a Best-of-N pattern)"
+welcome_message: |
+  Welcome to Thought Candidates!
+
+  This room uses **Best-of-N sampling** to explore multiple approaches to your problem.
+
+  **How it works:**
+  1. Your problem is given to N parallel generators (fast model)
+  2. Each candidate is evaluated by a critic (strong model)
+  3. Candidates are ranked by score and the best is selected
+
+  **Good for:**
+  - Problems with multiple valid solutions
+  - When you want to compare approaches
+  - Self-consistency checks on reasoning
+
+  **Not ideal for:**
+  - Simple queries that single-shot handles well
+  - Purely subjective tasks (no scoring criteria)
+  - Tight latency/cost budgets (2N LLM calls)
+
+  Enter any problem, question, or challenge to explore!
+
+suggestions:
+  - "How would you explain recursion to a beginner?"
+  - "What's the best approach to refactor a monolithic app?"
+  - "Design a caching strategy for a high-traffic API"
+  - "How should I structure a React app with complex state?"
+  - "What's the best way to handle authentication in a mobile app?"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.thought_candidates_factory.create_thought_candidates_agent"
+  with_agent_config: true
+  extra_config:
+    # Model for generation (fast, creative)
+    fast_model_name: "qwen3:4b"
+    # Model for evaluation (strong, analytical)
+    strong_model_name: "qwen3:8b"
+
+    # Number of candidates to generate (more = better quality, higher cost)
+    num_candidates: 5
+
+    # Maximum words per response (lower for local models)
+    max_words: 100
+
+    # Optional constraints applied to all problems
+    constraints: []
+    # Example:
+    # constraints:
+    #   - "Consider performance implications"
+    #   - "Prefer simple solutions"

@@ -15,9 +15,7 @@ from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
 from pydantic_ai.models import openai as openai_models
 from pydantic_ai.providers import ollama as ollama_providers
-
-if typing.TYPE_CHECKING:
-    from soliplex import config
+from soliplex import config
 
 MessageHistory = typing.Sequence[ai_messages.ModelMessage]
 NativeEvent = ai_messages.AgentStreamEvent | ai_run.AgentRunResultEvent[typing.Any]
@@ -156,7 +154,7 @@ class DebateAgent:
                     "pro_score": pro_total, "con_score": con_total,
                 }, activity_id)
 
-            delta = f"\nJudging (parallel)..."
+            delta = "\nJudging (parallel)..."
             think_part.content += delta
             yield ai_messages.PartDeltaEvent(index=0, delta=ai_messages.ThinkingPartDelta(content_delta=delta))
 

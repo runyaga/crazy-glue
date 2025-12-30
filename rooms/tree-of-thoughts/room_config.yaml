@@ -1,0 +1,60 @@
+id: "tree-of-thoughts"
+name: "Tree of Thoughts"
+description: "Multi-level exploration with pruning for complex reasoning (17b pattern)"
+welcome_message: |
+  Welcome to Tree of Thoughts!
+
+  This room uses **beam search** to explore a tree of reasoning paths.
+
+  **How it works:**
+  1. Generate root candidates for your problem
+  2. Expand the best branches (beam search)
+  3. Prune low-scoring paths
+  4. Synthesize the best path into a solution
+
+  **Good for:**
+  - Diagnostic reasoning ("why is X happening?")
+  - Multi-step planning
+  - Problems where greedy approaches fail
+  - Architecture decisions
+
+  **Not ideal for:**
+  - Open-ended chat or creative writing
+  - Simple queries single-shot handles well
+  - Tight latency budgets (10-100x slower)
+  - Tasks without evaluable correctness criteria
+
+  Enter a complex problem to explore deeply!
+
+suggestions:
+  - "A web app is responding slowly. Response times increased from 200ms to 3s. What are the likely causes?"
+  - "How should I migrate from a monolith to microservices?"
+  - "Design a fault-tolerant distributed cache system"
+  - "What's the best architecture for a real-time collaborative editor?"
+  - "Debug: Users report intermittent 500 errors but logs show no exceptions"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.tree_of_thoughts_factory.create_tree_of_thoughts_agent"
+  with_agent_config: true
+  extra_config:
+    # Model for generation (fast, creative)
+    fast_model_name: "qwen3:4b"
+    # Model for evaluation/synthesis (strong, analytical)
+    strong_model_name: "qwen3:8b"
+
+    # Tree exploration parameters
+    max_depth: 3          # How many levels deep to explore (1-10)
+    branch_factor: 3      # Candidates per node (1-10)
+    prune_threshold: 5.0  # Minimum score to continue expanding (0-10)
+    beam_width: 2         # Top-k nodes to expand per level
+
+    # Output constraints
+    max_words: 100        # Max words per thought (lower for local models)
+
+    # Optional problem constraints
+    constraints: []
+    # Example:
+    # constraints:
+    #   - "Consider both technical and business factors"
+    #   - "Prioritize actionable recommendations"

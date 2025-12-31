@@ -328,3 +328,256 @@ class TestRoomConfigEditor:
             # Reload and verify
             new_editor = RoomConfigEditor(room_dir)
             assert new_editor.get_description() == "Updated description"
+
+
+class TestToolGeneration:
+    """Test tool generation and module path handling."""
+
+    def test_module_path_strips_src_prefix(self, analysis_agent):
+        """Test that src/ prefix is stripped from module path."""
+        # Simulate the logic in _apply_pending_tool
+        file_path_str = "src/crazy_glue/tools/my_tool.py"
+        module_path = file_path_str
+        if module_path.startswith("src/"):
+            module_path = module_path[4:]
+        tool_module = module_path.replace("/", ".").replace(".py", "")
+
+        assert tool_module == "crazy_glue.tools.my_tool"
+        assert not tool_module.startswith("src.")
+
+    def test_module_path_without_src_unchanged(self, analysis_agent):
+        """Test paths without src/ are unchanged."""
+        file_path_str = "crazy_glue/tools/my_tool.py"
+        module_path = file_path_str
+        if module_path.startswith("src/"):
+            module_path = module_path[4:]
+        tool_module = module_path.replace("/", ".").replace(".py", "")
+
+        assert tool_module == "crazy_glue.tools.my_tool"
+
+    def test_existing_tool_importable(self):
+        """Test that existing tools can be imported."""
+        import importlib
+
+        # This should work - crazy_glue.tools should exist
+        # Test with an existing tool if any
+        tools_path = Path("src/crazy_glue/tools")
+        if tools_path.exists():
+            for tool_file in tools_path.glob("*.py"):
+                if tool_file.name.startswith("_"):
+                    continue
+                module_name = f"crazy_glue.tools.{tool_file.stem}"
+                try:
+                    importlib.import_module(module_name)
+                except ImportError:
+                    pytest.fail(f"Could not import {module_name}")
+
+    def test_tool_function_exists_and_callable(self):
+        """Test that tool modules contain callable functions."""
+        import importlib
+
+        tools_path = Path("src/crazy_glue/tools")
+        if tools_path.exists():
+            for tool_file in tools_path.glob("*.py"):
+                if tool_file.name.startswith("_"):
+                    continue
+                func_name = tool_file.stem
+                module_name = f"crazy_glue.tools.{func_name}"
+                module = importlib.import_module(module_name)
+                tool_func = getattr(module, func_name, None)
+                assert tool_func is not None, f"No {func_name} in {module_name}"
+                assert callable(tool_func), f"{func_name} is not callable"
+
+    def test_tool_dotted_path_format(self, analysis_agent):
+        """Test tool_name is module.function format."""
+        # The tool_name must be module.function, not just module
+        file_path_str = "src/crazy_glue/tools/my_tool.py"
+        func_name = "my_tool"
+
+        module_path = file_path_str
+        if module_path.startswith("src/"):
+            module_path = module_path[4:]
+        tool_module = module_path.replace("/", ".").replace(".py", "")
+        tool_dotted_path = f"{tool_module}.{func_name}"
+
+        assert tool_dotted_path == "crazy_glue.tools.my_tool.my_tool"
+
+
+class TestSanitizeIdentifier:
+    """Test the _sanitize_identifier function."""
+
+    def test_hyphen_to_underscore(self):
+        """Test hyphens are converted to underscores."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("big-filename")
+        assert error is None
+        assert result == "big_filename"
+
+    def test_spaces_to_underscore(self):
+        """Test spaces are converted to underscores."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("my tool name")
+        assert error is None
+        assert result == "my_tool_name"
+
+    def test_dots_to_underscore(self):
+        """Test dots are converted to underscores."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("file.parser")
+        assert error is None
+        assert result == "file_parser"
+
+    def test_leading_digit_prefixed(self):
+        """Test leading digits get underscore prefix."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("123tool")
+        assert error is None
+        assert result == "_123tool"
+
+    def test_special_chars_removed(self):
+        """Test special characters are removed."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("my@tool#name!")
+        assert error is None
+        assert result == "mytoolname"
+
+    def test_python_keyword_suffixed(self):
+        """Test Python keywords get _tool suffix."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("class")
+        assert error is None
+        assert result == "class_tool"
+
+    def test_empty_string_error(self):
+        """Test empty string returns error."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("")
+        assert error is not None
+        assert "empty" in error.lower()
+
+    def test_only_special_chars_error(self):
+        """Test string with only special chars returns error."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("@#$%")
+        assert error is not None
+
+    def test_uppercase_lowercased(self):
+        """Test uppercase is converted to lowercase."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("MyToolName")
+        assert error is None
+        assert result == "mytoolname"
+
+    def test_mixed_separators(self):
+        """Test mixed separators are handled."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("my-tool.name here")
+        assert error is None
+        assert result == "my_tool_name_here"
+
+    def test_multiple_underscores_collapsed(self):
+        """Test multiple underscores are collapsed."""
+        from crazy_glue.factories.analysis_factory import _sanitize_identifier
+        result, error = _sanitize_identifier("my--tool__name")
+        assert error is None
+        assert result == "my_tool_name"
+
+
+class TestPromptLibrary:
+    """Test prompt library functionality."""
+
+    def test_list_prompts_empty(self, analysis_agent):
+        """Test listing prompts when none exist."""
+        # Clear any existing prompts
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        prompts = analysis_agent._list_prompts()
+        assert prompts == []
+
+    def test_add_prompt(self, analysis_agent):
+        """Test adding a prompt to the library."""
+        # Clear existing prompts first
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        result = analysis_agent._add_prompt(
+            "Test Helper",
+            "You are a helpful test assistant."
+        )
+        assert result["status"] == "success"
+        assert "test-helper" in result["message"]
+
+    def test_add_prompt_creates_slug(self, analysis_agent):
+        """Test that prompt names are slugified."""
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        analysis_agent._add_prompt("My Cool Prompt", "Content here")
+        prompts = analysis_agent._load_prompts()
+        assert "my-cool-prompt" in prompts
+
+    def test_get_prompt(self, analysis_agent):
+        """Test getting a specific prompt."""
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        analysis_agent._add_prompt("finder", "You find things.")
+        prompt = analysis_agent._get_prompt("finder")
+        assert prompt is not None
+        assert prompt["content"] == "You find things."
+
+    def test_get_prompt_case_insensitive(self, analysis_agent):
+        """Test prompt lookup is case insensitive."""
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        analysis_agent._add_prompt("CamelCase", "Test content")
+        prompt = analysis_agent._get_prompt("camelcase")
+        assert prompt is not None
+
+    def test_remove_prompt(self, analysis_agent):
+        """Test removing a prompt."""
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        analysis_agent._add_prompt("temporary", "Will be removed")
+        result = analysis_agent._remove_prompt("temporary")
+        assert result["status"] == "success"
+
+        prompt = analysis_agent._get_prompt("temporary")
+        assert prompt is None
+
+    def test_remove_nonexistent_prompt(self, analysis_agent):
+        """Test removing a prompt that doesn't exist."""
+        result = analysis_agent._remove_prompt("nonexistent-prompt-xyz")
+        assert result["status"] == "error"
+        assert "not found" in result["message"]
+
+    def test_add_duplicate_prompt(self, analysis_agent):
+        """Test adding a prompt with same name fails."""
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        analysis_agent._add_prompt("unique", "First version")
+        result = analysis_agent._add_prompt("unique", "Second version")
+        assert result["status"] == "error"
+        assert "already exists" in result["message"]
+
+    def test_prompt_has_timestamp(self, analysis_agent):
+        """Test that prompts have created timestamp."""
+        prompts_path = analysis_agent._get_prompts_path()
+        if prompts_path.exists():
+            prompts_path.unlink()
+
+        analysis_agent._add_prompt("timestamped", "Has a timestamp")
+        prompts = analysis_agent._load_prompts()
+        assert "created" in prompts["timestamped"]
+        assert "T" in prompts["timestamped"]["created"]  # ISO format

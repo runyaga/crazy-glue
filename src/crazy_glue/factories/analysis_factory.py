@@ -31,17 +31,21 @@ from __future__ import annotations
 import dataclasses
 import importlib
 import inspect
+import json
 import typing
 import uuid
 from collections import abc
 from pathlib import Path
 
+import yaml
 from agentic_patterns.domain_exploration import ExplorationBoundary
 from agentic_patterns.domain_exploration import KnowledgeStore
 from agentic_patterns.domain_exploration import explore_domain
 from pydantic_ai import messages as ai_messages
 from pydantic_ai import run as ai_run
 from pydantic_ai import tools as ai_tools
+from pydantic_ai.models import openai as openai_models
+from pydantic_ai.providers import ollama as ollama_providers
 from soliplex import config
 
 from crazy_glue.factories.analysis.room_editor import RoomConfigEditor
@@ -54,6 +58,69 @@ NativeEvent = (
 # Default paths
 DEFAULT_MAP_PATH = "db/project_map.json"
 DEFAULT_ROOTS = ["src/crazy_glue", "rooms/"]
+PENDING_TOOL_PATH = "db/pending_tool.json"
+TOOLS_DIR = "src/crazy_glue/tools"
+PROMPTS_PATH = "db/prompts.json"
+
+# Python reserved keywords that can't be used as identifiers
+PYTHON_KEYWORDS = frozenset({
+    "False", "None", "True", "and", "as", "assert", "async", "await",
+    "break", "class", "continue", "def", "del", "elif", "else", "except",
+    "finally", "for", "from", "global", "if", "import", "in", "is",
+    "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+    "while", "with", "yield",
+})
+
+
+def _sanitize_identifier(name: str) -> tuple[str, str | None]:
+    """Convert a user-provided name into a valid Python identifier.
+
+    Args:
+        name: User-provided tool/function name
+
+    Returns:
+        Tuple of (sanitized_name, error_message).
+        If error_message is not None, sanitization failed.
+    """
+    import keyword
+    import re
+
+    if not name or not name.strip():
+        return "", "Name cannot be empty"
+
+    # Start with lowercase, strip whitespace
+    result = name.strip().lower()
+
+    # Replace common separators with underscores
+    result = re.sub(r"[-\s.]+", "_", result)
+
+    # Remove any character that isn't alphanumeric or underscore
+    result = re.sub(r"[^a-z0-9_]", "", result)
+
+    # Collapse multiple underscores
+    result = re.sub(r"_+", "_", result)
+
+    # Strip leading/trailing underscores
+    result = result.strip("_")
+
+    # If starts with digit, prefix with underscore
+    if result and result[0].isdigit():
+        result = f"_{result}"
+
+    # Check if empty after sanitization
+    if not result:
+        return "", f"Name '{name}' contains no valid identifier characters"
+
+    # Check for Python keywords
+    if keyword.iskeyword(result) or result in PYTHON_KEYWORDS:
+        result = f"{result}_tool"
+
+    # Validate it's a valid identifier
+    if not result.isidentifier():
+        return "", f"Could not create valid identifier from '{name}'"
+
+    return result, None
+
 
 # Reference implementations mapping
 REFERENCE_IMPLEMENTATIONS = {
@@ -117,8 +184,31 @@ class AnalysisAgent:
     agent_config: config.FactoryAgentConfig
     tool_configs: config.ToolConfigMap = None
     mcp_client_toolset_configs: config.MCP_ClientToolsetConfigMap = None
+    _model: typing.Any = dataclasses.field(default=None, repr=False)
 
     output_type = None
+
+    @property
+    def model_name(self) -> str:
+        """Model name from room config."""
+        default = "gpt-oss:latest"
+        return self.agent_config.extra_config.get("model_name", default)
+
+    def _get_model(self):
+        """Create model using soliplex configuration."""
+        if self._model is None:
+            installation_config = self.agent_config._installation_config
+            provider_base_url = installation_config.get_environment(
+                "OLLAMA_BASE_URL"
+            )
+            provider = ollama_providers.OllamaProvider(
+                base_url=f"{provider_base_url}/v1",
+            )
+            self._model = openai_models.OpenAIChatModel(
+                model_name=self.model_name,
+                provider=provider,
+            )
+        return self._model
 
     @property
     def map_path(self) -> str:
@@ -526,6 +616,498 @@ class AnalysisAgent:
         except Exception as e:
             return {"status": "error", "message": f"Failed: {e}"}
 
+    # ----- Tool Generation (Milestone 7) -----
+
+    def _get_pending_tool_path(self) -> Path:
+        """Get path to pending tool file."""
+        return _get_project_root() / PENDING_TOOL_PATH
+
+    def _load_pending_tool(self) -> dict | None:
+        """Load pending tool from staging file."""
+        path = self._get_pending_tool_path()
+        if path.exists():
+            try:
+                return json.loads(path.read_text())
+            except (json.JSONDecodeError, KeyError):
+                return None
+        return None
+
+    def _save_pending_tool(self, tool_data: dict) -> None:
+        """Save pending tool to staging file."""
+        path = self._get_pending_tool_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(tool_data, indent=2))
+
+    def _clear_pending_tool(self) -> None:
+        """Clear pending tool staging file."""
+        path = self._get_pending_tool_path()
+        if path.exists():
+            path.unlink()
+
+    async def _generate_tool_code(
+        self,
+        name: str,
+        description: str,
+        refinement: str | None = None,
+    ) -> tuple[str, str]:
+        """Generate tool code and description from user request using LLM.
+
+        Args:
+            name: Tool function name (snake_case)
+            description: What the tool should do
+            refinement: Optional refinement to previous generation
+
+        Returns:
+            Tuple of (generated_code, generated_description).
+            The description is a concise summary suitable for tool_description.
+        """
+        import pydantic
+        from pydantic_ai import Agent
+
+        # Define structured output model
+        class GeneratedTool(pydantic.BaseModel):
+            """LLM output containing generated tool code and description."""
+
+            code: str = pydantic.Field(
+                description="Complete Python code for the tool"
+            )
+            summary: str = pydantic.Field(
+                description="Concise 1-sentence tool description"
+            )
+
+        # Name is already sanitized by _generate_tool
+        func_name = name
+        model_name = "".join(w.capitalize() for w in func_name.split("_"))
+        model_name += "Result"
+
+        # Build prompt for LLM code generation
+        refinement_line = ""
+        if refinement:
+            refinement_line = f"**Refinement**: {refinement}\n"
+        prompt = f"""Generate a Python tool for pydantic-ai.
+
+**Tool name**: {func_name}
+**Description**: {description}
+{refinement_line}
+**Requirements**:
+1. Create a Pydantic model `{model_name}` for structured output
+2. Create an async function `{func_name}` that returns `{model_name}`
+3. Add a docstring to the function describing what it does (IMPORTANT!)
+4. Function should NOT use RunContext - just take necessary parameters
+5. Implement the ACTUAL logic, not a placeholder
+6. Handle errors gracefully, returning error info in the model
+7. Use appropriate imports (pathlib, pydantic, etc.)
+
+**Example pattern** (adapt fields/logic to the actual task):
+
+import pydantic
+
+class SearchResult(pydantic.BaseModel):
+    found: bool
+    matches: list[str]
+    count: int
+    error: str | None = None
+
+async def search_files(pattern: str, path: str = ".") -> SearchResult:
+    \"\"\"Search for files matching a glob pattern.\"\"\"
+    from pathlib import Path
+    try:
+        target = Path(path).resolve()
+        matches = [str(p) for p in target.rglob(pattern)]
+        return SearchResult(
+            found=len(matches) > 0,
+            matches=matches,
+            count=len(matches),
+        )
+    except Exception as e:
+        return SearchResult(found=False, matches=[], count=0, error=str(e))
+
+Provide:
+1. **code**: Complete Python code (no markdown fences)
+2. **summary**: Concise 1-sentence description (e.g., "Find large files")"""
+
+        model = self._get_model()
+        agent: Agent[None, GeneratedTool] = Agent(
+            model, output_type=GeneratedTool
+        )
+        result = await agent.run(prompt)
+        tool_output = result.output
+
+        code = tool_output.code
+        summary = tool_output.summary
+
+        # Clean up any markdown fences if present
+        if code.startswith("```python"):
+            code = code[9:]
+        if code.startswith("```"):
+            code = code[3:]
+        if code.endswith("```"):
+            code = code[:-3]
+        code = code.strip()
+
+        # Add module docstring if missing
+        if not code.startswith('"""'):
+            header = f'"""\nTool: {name}\n\n{summary}\n"""\n\n'
+            code = header + code
+
+        return code, summary
+
+    async def _generate_tool(
+        self,
+        room_id: str,
+        name: str,
+        description: str,
+    ) -> dict:
+        """Generate a tool and stage it for approval.
+
+        Args:
+            room_id: Target room for the tool
+            name: Tool name (will be sanitized to valid Python identifier)
+            description: What the tool should do
+
+        Returns:
+            Dict with status, code preview, and any errors.
+        """
+        # Sanitize and validate tool name first
+        func_name, error = _sanitize_identifier(name)
+        if error:
+            return {"status": "error", "message": error}
+
+        # Validate room exists and is managed
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        # Generate the code and description using LLM (pass sanitized name)
+        code, generated_description = await self._generate_tool_code(
+            func_name, description
+        )
+
+        # Stage tool (sanitized name + LLM-generated description)
+        tool_data = {
+            "room_id": room_id,
+            "name": func_name,  # Store sanitized name
+            "original_name": name,  # Keep original for display
+            "description": generated_description,  # Use LLM-generated summary
+            "user_description": description,  # Keep user's original request
+            "code": code,
+            "file_path": f"{TOOLS_DIR}/{func_name}.py",
+        }
+        self._save_pending_tool(tool_data)
+
+        return {
+            "status": "staged",
+            "code": code,
+            "description": generated_description,
+            "file_path": tool_data["file_path"],
+            "message": f"Tool '{name}' staged for {room_id}",
+        }
+
+    def _apply_pending_tool(self) -> dict:
+        """Apply the staged tool - validate, write, wire to room, check-config.
+
+        Process:
+        1. Validate Python syntax (AST parse)
+        2. Validate code compiles
+        3. Write tool file to disk
+        4. Wire tool into room's YAML config
+        5. Run check-config to validate
+        """
+        pending = self._load_pending_tool()
+        if not pending:
+            return {"status": "error", "message": "No pending tool to apply"}
+
+        project_root = _get_project_root()
+        file_path = project_root / pending["file_path"]
+        name = pending["name"]
+        room_id = pending["room_id"]
+        code = pending["code"]
+
+        # Validate Python syntax
+        try:
+            import ast
+            ast.parse(code)
+        except SyntaxError as e:
+            return {
+                "status": "error",
+                "message": f"Syntax error in generated code: {e}",
+            }
+
+        # Validate code compiles
+        try:
+            compile(code, str(file_path), "exec")
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Compilation error: {e}",
+            }
+
+        # Build module path for tool registration
+        # Strip "src/" prefix since it's not part of the Python module path
+        file_path_str = pending["file_path"]
+        module_path = file_path_str
+        if module_path.startswith("src/"):
+            module_path = module_path[4:]  # Remove "src/"
+        tool_module = module_path.replace("/", ".").replace(".py", "")
+
+        # The tool_name must be module.function, not just module
+        # Name is already sanitized when stored in pending_tool
+        func_name = name
+        # e.g., "crazy_glue.tools.big_file.big_file"
+        tool_dotted_path = f"{tool_module}.{func_name}"
+
+        try:
+            # Write the tool file
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(code)
+
+            # Validate module can be imported AND function exists
+            try:
+                module = importlib.import_module(tool_module)
+                tool_func = getattr(module, func_name, None)
+                if tool_func is None:
+                    if file_path.exists():
+                        file_path.unlink()
+                    msg = f"Function '{func_name}' not found in {tool_module}"
+                    return {"status": "error", "message": msg}
+                if not callable(tool_func):
+                    if file_path.exists():
+                        file_path.unlink()
+                    msg = f"'{func_name}' in {tool_module} is not callable"
+                    return {"status": "error", "message": msg}
+            except ImportError as e:
+                # Cleanup and return error
+                if file_path.exists():
+                    file_path.unlink()
+                return {
+                    "status": "error",
+                    "message": f"Import failed for {tool_module}: {e}",
+                }
+
+            # Wire tool into room config (full dotted path to function)
+            editor, error = self._get_room_editor(
+                room_id, require_managed=True
+            )
+            if error:
+                return {"status": "error", "message": error}
+
+            editor.add_tool(tool_dotted_path)
+            editor.save()
+
+            # Validate saved YAML is parseable
+            try:
+                yaml.safe_load(editor.config_path.read_text())
+            except yaml.YAMLError as e:
+                # Rollback
+                if file_path.exists():
+                    file_path.unlink()
+                return {
+                    "status": "error",
+                    "message": f"Invalid YAML after save: {e}",
+                }
+
+            # Run check-config to validate
+            errors = editor.validate()
+            if errors:
+                # Rollback: remove tool from config
+                editor.remove_tool(tool_dotted_path)
+                editor.save()
+                # Also remove the file
+                if file_path.exists():
+                    file_path.unlink()
+                err_msg = "; ".join(errors)
+                return {
+                    "status": "error",
+                    "message": f"Config validation failed: {err_msg}",
+                }
+
+            # Success - clear staging
+            self._clear_pending_tool()
+
+            return {
+                "status": "success",
+                "message": f"Tool '{name}' added to {room_id}",
+                "file_path": str(file_path),
+                "tool_name": tool_dotted_path,
+            }
+
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to apply: {e}"}
+
+    def _discard_pending_tool(self) -> dict:
+        """Discard the staged tool."""
+        pending = self._load_pending_tool()
+        if not pending:
+            return {"status": "error", "message": "No pending tool to discard"}
+
+        name = pending["name"]
+        self._clear_pending_tool()
+        msg = f"Discarded pending tool '{name}'"
+        return {"status": "success", "message": msg}
+
+    async def _refine_pending_tool(self, refinement: str) -> dict:
+        """Refine the staged tool with additional requirements."""
+        pending = self._load_pending_tool()
+        if not pending:
+            return {"status": "error", "message": "No pending tool to refine"}
+
+        # Regenerate with refinement (use user_description if available)
+        base_desc = pending.get("user_description", pending["description"])
+        code, new_description = await self._generate_tool_code(
+            pending["name"], base_desc, refinement=refinement
+        )
+
+        # Update staging with new code and description
+        pending["description"] = new_description
+        pending["code"] = code
+        self._save_pending_tool(pending)
+
+        return {
+            "status": "staged",
+            "code": code,
+            "description": new_description,
+            "file_path": pending["file_path"],
+            "message": f"Tool refined with: {refinement}",
+        }
+
+    # ----- Prompt Library (Milestone 8) -----
+
+    def _get_prompts_path(self) -> Path:
+        """Get path to prompts library file."""
+        return _get_project_root() / PROMPTS_PATH
+
+    def _load_prompts(self) -> dict:
+        """Load prompts from library file."""
+        path = self._get_prompts_path()
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                return data.get("prompts", {})
+            except (json.JSONDecodeError, KeyError):
+                return {}
+        return {}
+
+    def _save_prompts(self, prompts: dict) -> None:
+        """Save prompts to library file."""
+        path = self._get_prompts_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"prompts": prompts}
+        path.write_text(json.dumps(data, indent=2))
+
+    def _list_prompts(self) -> list[dict]:
+        """List all saved prompts."""
+        prompts = self._load_prompts()
+        result = []
+        for key, prompt in prompts.items():
+            result.append({
+                "id": key,
+                "name": prompt.get("name", key),
+                "preview": prompt.get("content", "")[:60] + "...",
+                "created": prompt.get("created", ""),
+            })
+        return sorted(result, key=lambda p: p["name"])
+
+    def _get_prompt(self, name: str) -> dict | None:
+        """Get a specific prompt by name/id."""
+        prompts = self._load_prompts()
+        # Try exact match first
+        if name in prompts:
+            return prompts[name]
+        # Try case-insensitive match
+        name_lower = name.lower()
+        for key, prompt in prompts.items():
+            if key.lower() == name_lower:
+                return prompt
+        return None
+
+    def _add_prompt(self, name: str, content: str) -> dict:
+        """Add a new prompt to the library."""
+        import datetime
+
+        prompts = self._load_prompts()
+
+        # Create slug from name
+        slug = name.lower().replace(" ", "-").replace("_", "-")
+
+        if slug in prompts:
+            return {
+                "status": "error",
+                "message": f"Prompt '{slug}' already exists",
+            }
+
+        prompts[slug] = {
+            "name": name,
+            "content": content,
+            "created": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+        self._save_prompts(prompts)
+
+        return {
+            "status": "success",
+            "message": f"Prompt '{name}' saved as '{slug}'",
+            "id": slug,
+        }
+
+    def _remove_prompt(self, name: str) -> dict:
+        """Remove a prompt from the library."""
+        prompts = self._load_prompts()
+
+        # Find the prompt
+        key_to_remove = None
+        name_lower = name.lower()
+        for key in prompts:
+            if key.lower() == name_lower:
+                key_to_remove = key
+                break
+
+        if not key_to_remove:
+            return {
+                "status": "error",
+                "message": f"Prompt '{name}' not found",
+            }
+
+        del prompts[key_to_remove]
+        self._save_prompts(prompts)
+
+        return {
+            "status": "success",
+            "message": f"Prompt '{key_to_remove}' removed",
+        }
+
+    def _use_prompt(self, room_id: str, prompt_name: str) -> dict:
+        """Apply a prompt to a room's system prompt."""
+        # Get the prompt
+        prompt = self._get_prompt(prompt_name)
+        if not prompt:
+            return {
+                "status": "error",
+                "message": f"Prompt '{prompt_name}' not found",
+            }
+
+        # Get the room editor
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        try:
+            editor.set_system_prompt(prompt["content"])
+            editor.save()
+
+            # Validate
+            errors = editor.validate()
+            if errors:
+                return {
+                    "status": "warning",
+                    "message": f"Applied but validation issues: {errors}",
+                }
+
+            p_name = prompt.get("name", prompt_name)
+            msg = f"Applied prompt '{p_name}' to {room_id}"
+            return {"status": "success", "message": msg}
+
+        except Exception as e:
+            return {"status": "error", "message": f"Failed: {e}"}
+
     def _inspect_room(self, room_id: str) -> dict | None:
         """Get detailed info about a specific room."""
         room_cfg = self.installation.room_configs.get(room_id)
@@ -786,6 +1368,14 @@ agent:
         errors = []
 
         for rel_path, content in files.items():
+            # Validate YAML before writing
+            if rel_path.endswith(".yaml") or rel_path.endswith(".yml"):
+                try:
+                    yaml.safe_load(content)
+                except yaml.YAMLError as e:
+                    errors.append(f"Invalid YAML in {rel_path}: {e}")
+                    continue
+
             if not any(rel_path.startswith(p) for p in allowed_prefixes):
                 errors.append(f"Rejected: {rel_path} (not in allowed paths)")
                 continue
@@ -1080,6 +1670,81 @@ agent:
                 response_parts.append(f"- {t['description']}\n")
                 response_parts.append(f"- Requires: {t['requires']}\n\n")
 
+        elif "generate tool" in prompt_lower:
+            # Parse: generate tool <room-id> <name> <description...>
+            parts = user_prompt.split(maxsplit=4)
+            if len(parts) < 5:
+                response_parts.append("## Generate Tool\n\n")
+                usage = "Usage: `generate tool <room-id> <name> <desc>`\n\n"
+                response_parts.append(usage)
+                response_parts.append("**Example:**\n")
+                example = "generate tool my-room list_files List directory"
+                response_parts.append(f"`{example}`\n")
+            else:
+                room_id = parts[2]
+                name = parts[3]
+                description = parts[4]
+                delta = f"\nGenerating tool {name} for {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = await self._generate_tool(room_id, name, description)
+                if result["status"] == "staged":
+                    response_parts.append("## Tool Generated (Staged)\n\n")
+                    response_parts.append(f"**Name**: `{name}`\n")
+                    response_parts.append(f"**Room**: `{room_id}`\n")
+                    gen_desc = result.get('description', '')
+                    response_parts.append(f"**Description**: {gen_desc}\n")
+                    file_path = result['file_path']
+                    response_parts.append(f"**File**: `{file_path}`\n\n")
+                    response_parts.append("**Preview:**\n")
+                    code_block = f"```python\n{result['code']}```\n\n"
+                    response_parts.append(code_block)
+                    response_parts.append("**Commands:**\n")
+                    response_parts.append("- `apply tool` - Save and add\n")
+                    response_parts.append("- `discard tool` - Discard\n")
+                    response_parts.append("- Or describe changes to refine\n")
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
+        elif prompt_lower == "apply tool":
+            pending = self._load_pending_tool()
+            if not pending:
+                response_parts.append("## No Pending Tool\n\n")
+                response_parts.append("Generate a tool first with:\n")
+                usage = "`generate tool <room-id> <name> <desc>`\n"
+                response_parts.append(usage)
+            else:
+                delta = f"\nApplying tool {pending['name']}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._apply_pending_tool()
+                if result["status"] == "success":
+                    response_parts.append("## Tool Applied\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    file_path = result['file_path']
+                    response_parts.append(f"**File**: `{file_path}`\n\n")
+                    restart = "Restart soliplex to load the tool.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
+        elif prompt_lower == "discard tool":
+            pending = self._load_pending_tool()
+            if not pending:
+                response_parts.append("## No Pending Tool\n\n")
+                response_parts.append("Nothing to discard.\n")
+            else:
+                result = self._discard_pending_tool()
+                response_parts.append("## Tool Discarded\n\n")
+                response_parts.append(f"{result['message']}\n")
+
         elif "add tool" in prompt_lower:
             # Parse: add tool <room-id> <tool-name>
             parts = user_prompt.split()
@@ -1264,6 +1929,122 @@ agent:
                     hint = "Add to installation.yaml secrets section.\n"
                     response_parts.append(hint)
 
+        elif prompt_lower == "list prompts":
+            delta = "\nListing saved prompts..."
+            think_part.content += delta
+            tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+            yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+            prompts = self._list_prompts()
+            response_parts.append("## Prompt Library\n\n")
+            if prompts:
+                for p in prompts:
+                    response_parts.append(f"### `{p['id']}`\n")
+                    response_parts.append(f"**Name**: {p['name']}\n")
+                    response_parts.append(f"**Preview**: {p['preview']}\n\n")
+            else:
+                response_parts.append("No prompts saved yet.\n\n")
+                hint = "Use `add prompt <name>` to create one.\n"
+                response_parts.append(hint)
+
+        elif "show prompt" in prompt_lower:
+            # Parse: show prompt <name>
+            parts = user_prompt.split(maxsplit=2)
+            if len(parts) < 3:
+                response_parts.append("Usage: `show prompt <name>`\n")
+            else:
+                name = parts[2]
+                prompt = self._get_prompt(name)
+                if prompt:
+                    response_parts.append(f"## Prompt: {prompt['name']}\n\n")
+                    response_parts.append("**Content:**\n")
+                    response_parts.append(f"```\n{prompt['content']}\n```\n")
+                else:
+                    err = f"## Error\n\nPrompt '{name}' not found.\n"
+                    response_parts.append(err)
+
+        elif "add prompt" in prompt_lower:
+            # Parse: add prompt <name> <content...>
+            # or: add prompt <name> (then content on next lines)
+            parts = user_prompt.split(maxsplit=2)
+            if len(parts) < 3:
+                response_parts.append("## Add Prompt\n\n")
+                usage = "Usage: `add prompt <name> <content>`\n\n"
+                response_parts.append(usage)
+                response_parts.append("**Example:**\n")
+                example = "add prompt helpful You are a helpful assistant."
+                response_parts.append(f"`{example}`\n")
+            else:
+                name = parts[2].split()[0]  # First word is name
+                content = " ".join(parts[2].split()[1:])  # Rest is content
+
+                if not content:
+                    response_parts.append("## Error\n\n")
+                    response_parts.append("Prompt content required.\n")
+                else:
+                    delta = f"\nSaving prompt '{name}'..."
+                    think_part.content += delta
+                    tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                    yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                    result = self._add_prompt(name, content)
+                    if result["status"] == "success":
+                        response_parts.append("## Prompt Saved\n\n")
+                        response_parts.append(f"{result['message']}\n\n")
+                        response_parts.append("**Content:**\n")
+                        response_parts.append(f"```\n{content}\n```\n")
+                    else:
+                        err = f"## Error\n\n{result['message']}\n"
+                        response_parts.append(err)
+
+        elif "remove prompt" in prompt_lower:
+            # Parse: remove prompt <name>
+            parts = user_prompt.split()
+            if len(parts) < 3:
+                response_parts.append("Usage: `remove prompt <name>`\n")
+            else:
+                name = parts[2]
+                delta = f"\nRemoving prompt '{name}'..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._remove_prompt(name)
+                if result["status"] == "success":
+                    response_parts.append("## Prompt Removed\n\n")
+                    response_parts.append(f"{result['message']}\n")
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
+        elif "use prompt" in prompt_lower:
+            # Parse: use prompt <room-id> <prompt-name>
+            parts = user_prompt.split()
+            if len(parts) < 4:
+                response_parts.append("## Use Prompt\n\n")
+                usage = "Usage: `use prompt <room-id> <prompt-name>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                prompt_name = parts[3]
+                delta = f"\nApplying prompt '{prompt_name}' to {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._use_prompt(room_id, prompt_name)
+                if result["status"] == "success":
+                    response_parts.append("## Prompt Applied\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
         elif "enable mcp-server" in prompt_lower:
             # Parse: enable mcp-server <room-id>
             parts = user_prompt.split()
@@ -1399,15 +2180,32 @@ agent:
                     response_parts.append(f"- `{ref}`\n")
 
         elif "scaffold" in prompt_lower or "create" in prompt_lower:
-            parts = user_prompt.split("room", 1)
-            if len(parts) > 1:
-                name_part = parts[0].replace("create", "")
-                name_part = name_part.replace("scaffold", "").strip()
-                name = name_part or "NewRoom"
-                intent = parts[1].strip() if len(parts) > 1 else user_prompt
-            else:
-                name = "NewRoom"
-                intent = user_prompt
+            # Parse: create <name> room [for <intent>]
+            # or: create <name> (name only, no "room" suffix)
+            words = user_prompt.split()
+            name = "NewRoom"
+            intent = user_prompt
+
+            # Find "create" or "scaffold" position
+            start_idx = 0
+            for i, w in enumerate(words):
+                if w.lower() in ("create", "scaffold"):
+                    start_idx = i + 1
+                    break
+
+            # Extract name - words after create/scaffold until "room" or end
+            name_words = []
+            intent_start = len(words)
+            for i in range(start_idx, len(words)):
+                if words[i].lower() == "room":
+                    intent_start = i + 1
+                    break
+                name_words.append(words[i])
+
+            if name_words:
+                name = " ".join(name_words)
+            if intent_start < len(words):
+                intent = " ".join(words[intent_start:])
 
             delta = f"\nScaffolding room: {name}..."
             think_part.content += delta
@@ -1441,36 +2239,74 @@ agent:
             response_parts.append("Restart soliplex to load the new room.\n")
 
         else:
-            header = f"## System Architect\n\n{SYSTEM_PROMPT}\n\n"
-            response_parts.append(header)
-            response_parts.append("**Introspection:**\n")
-            response_parts.append("- `rooms` - List registered rooms\n")
-            response_parts.append("- `managed` - List managed rooms\n")
-            response_parts.append("- `inspect <id>` - Inspect a room\n\n")
-            response_parts.append("**Room Management:**\n")
-            response_parts.append("- `create <name> room` - Create room\n")
-            response_parts.append("- `edit <id> <field> <val>` - Edit room\n")
-            response_parts.append("- `add suggestion <id> <text>`\n")
-            response_parts.append("- `remove suggestion <id> <idx>`\n\n")
-            response_parts.append("**Tool Management:**\n")
-            response_parts.append("- `list tools` - Show available tools\n")
-            response_parts.append("- `add tool <id> <tool-name>`\n")
-            response_parts.append("- `remove tool <id> <tool-name>`\n\n")
-            response_parts.append("**MCP Toolsets:**\n")
-            response_parts.append("- `list mcp` - Show MCP options\n")
-            response_parts.append("- `add mcp http <id> <name> <url>`\n")
-            response_parts.append("- `add mcp stdio <id> <name> <cmd>`\n")
-            response_parts.append("- `remove mcp <id> <name>`\n\n")
-            response_parts.append("**Secrets:**\n")
-            response_parts.append("- `list secrets` - Show secrets\n")
-            response_parts.append("- `check secret <name>` - Check status\n\n")
-            response_parts.append("**MCP Server Mode:**\n")
-            response_parts.append("- `enable mcp-server <id>`\n")
-            response_parts.append("- `disable mcp-server <id>`\n\n")
-            response_parts.append("**Codebase Analysis:**\n")
-            response_parts.append("- `refresh` - Build knowledge graph\n")
-            response_parts.append("- `find <name>` - Search entities\n")
-            response_parts.append("- `show joker|faux|brainstorm` - Refs\n")
+            # Check for pending tool - treat unrecognized input as refinement
+            pending = self._load_pending_tool()
+            if pending and user_prompt.strip():
+                delta = f"\nRefining tool {pending['name']}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = await self._refine_pending_tool(user_prompt.strip())
+                if result["status"] == "staged":
+                    response_parts.append("## Tool Refined\n\n")
+                    p_name = pending['name']
+                    p_room = pending['room_id']
+                    response_parts.append(f"**Name**: `{p_name}`\n")
+                    response_parts.append(f"**Room**: `{p_room}`\n")
+                    gen_desc = result.get('description', '')
+                    response_parts.append(f"**Description**: {gen_desc}\n\n")
+                    response_parts.append("**Updated Preview:**\n")
+                    code_block = f"```python\n{result['code']}```\n\n"
+                    response_parts.append(code_block)
+                    response_parts.append("**Commands:**\n")
+                    response_parts.append("- `apply tool` - Save and add\n")
+                    response_parts.append("- `discard tool` - Discard\n")
+                    response_parts.append("- Or describe more changes\n")
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+            else:
+                header = f"## System Architect\n\n{SYSTEM_PROMPT}\n\n"
+                response_parts.append(header)
+                response_parts.append("**Introspection:**\n")
+                response_parts.append("- `rooms` - List registered rooms\n")
+                response_parts.append("- `managed` - List managed rooms\n")
+                response_parts.append("- `inspect <id>` - Inspect room\n\n")
+                response_parts.append("**Room Management:**\n")
+                response_parts.append("- `create <name> room` - Create room\n")
+                response_parts.append("- `edit <id> <field> <val>`\n")
+                response_parts.append("- `add suggestion <id> <text>`\n")
+                response_parts.append("- `remove suggestion <id> <idx>`\n\n")
+                response_parts.append("**Tool Generation:**\n")
+                response_parts.append("- `generate tool <id> <name> <desc>`\n")
+                response_parts.append("- `apply tool` - Apply staged tool\n")
+                response_parts.append("- `discard tool` - Discard staged\n\n")
+                response_parts.append("**Tool Management:**\n")
+                response_parts.append("- `list tools` - Show available\n")
+                response_parts.append("- `add tool <id> <tool-name>`\n")
+                response_parts.append("- `remove tool <id> <tool-name>`\n\n")
+                response_parts.append("**MCP Toolsets:**\n")
+                response_parts.append("- `list mcp` - Show MCP options\n")
+                response_parts.append("- `add mcp http <id> <name> <url>`\n")
+                response_parts.append("- `add mcp stdio <id> <name> <cmd>`\n")
+                response_parts.append("- `remove mcp <id> <name>`\n\n")
+                response_parts.append("**Secrets:**\n")
+                response_parts.append("- `list secrets` - Show secrets\n")
+                response_parts.append("- `check secret <name>`\n\n")
+                response_parts.append("**Prompt Library:**\n")
+                response_parts.append("- `list prompts` - Show saved\n")
+                response_parts.append("- `show prompt <name>`\n")
+                response_parts.append("- `add prompt <name> <content>`\n")
+                response_parts.append("- `remove prompt <name>`\n")
+                response_parts.append("- `use prompt <id> <name>`\n\n")
+                response_parts.append("**MCP Server Mode:**\n")
+                response_parts.append("- `enable mcp-server <id>`\n")
+                response_parts.append("- `disable mcp-server <id>`\n\n")
+                response_parts.append("**Codebase Analysis:**\n")
+                response_parts.append("- `refresh` - Build knowledge graph\n")
+                response_parts.append("- `find <name>` - Search entities\n")
+                response_parts.append("- `show joker|faux|brainstorm`\n")
 
         if emitter:
             emitter.update_activity("analysis", {

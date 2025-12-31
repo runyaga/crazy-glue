@@ -13,6 +13,25 @@ from typing import Any
 
 import yaml
 
+
+# Custom representer to use block style for multi-line strings
+def _str_representer(dumper: yaml.Dumper, data: str) -> yaml.Node:
+    """Use block style (|) for multi-line strings, plain style otherwise."""
+    tag = "tag:yaml.org,2002:str"
+    if "\n" in data:
+        return dumper.represent_scalar(tag, data, style="|")
+    return dumper.represent_scalar(tag, data)
+
+
+# Create a custom dumper that uses block style for multi-line strings
+class _BlockStyleDumper(yaml.SafeDumper):
+    """YAML dumper that uses block style for multi-line strings."""
+
+    pass
+
+
+_BlockStyleDumper.add_representer(str, _str_representer)
+
 # Tracking file for managed rooms (stored separately since RoomConfig
 # doesn't support arbitrary fields)
 MANAGED_ROOMS_FILE = "db/managed_rooms.json"
@@ -57,7 +76,12 @@ class RoomConfigEditor:
         if self._data is None:
             raise ValueError("No config loaded")
         content = yaml.dump(
-            self._data, default_flow_style=False, sort_keys=False, width=80
+            self._data,
+            Dumper=_BlockStyleDumper,
+            default_flow_style=False,
+            sort_keys=False,
+            width=80,
+            allow_unicode=True,
         )
         self.config_path.write_text(content)
 
@@ -226,37 +250,64 @@ class RoomConfigEditor:
         return self._get_agent().get("model_name")
 
     # ----- Tools -----
+    # Note: soliplex expects tools as a LIST of dicts with tool_name key:
+    # tools:
+    #   - tool_name: "soliplex.tools.search_documents"
+    #     rag_lancedb_stem: "my_db"
 
-    def _get_tools(self) -> dict:
-        """Get or create tools dict."""
+    def _get_tools(self) -> list:
+        """Get or create tools list."""
         data = self.load()
         if "tools" not in data:
-            data["tools"] = {}
+            data["tools"] = []
+        # Handle legacy dict format by converting
+        if isinstance(data["tools"], dict):
+            data["tools"] = []
         return data["tools"]
 
-    def add_tool(self, tool_name: str, **tool_config: Any) -> None:
-        """Add a tool to the room."""
+    def add_tool(
+        self,
+        tool_name: str,
+        **tool_config: Any,
+    ) -> None:
+        """Add a tool to the room.
+
+        Args:
+            tool_name: The tool name (e.g. soliplex.tools.search_documents)
+            **tool_config: Additional tool configuration (allow_mcp, etc.)
+        """
         tools = self._get_tools()
-        tools[tool_name] = tool_config if tool_config else {}
+        # Check if already exists
+        for t in tools:
+            if t.get("tool_name") == tool_name:
+                return  # Already exists
+        tool_entry = {"tool_name": tool_name}
+        tool_entry.update(tool_config)
+        tools.append(tool_entry)
 
     def remove_tool(self, tool_name: str) -> bool:
         """Remove a tool. Returns True if removed."""
         tools = self._get_tools()
-        if tool_name in tools:
-            del tools[tool_name]
-            return True
+        for i, t in enumerate(tools):
+            if t.get("tool_name") == tool_name:
+                tools.pop(i)
+                return True
         return False
 
     def configure_tool(self, tool_name: str, **config: Any) -> None:
         """Update tool configuration."""
         tools = self._get_tools()
-        if tool_name not in tools:
-            tools[tool_name] = {}
-        tools[tool_name].update(config)
+        for t in tools:
+            if t.get("tool_name") == tool_name:
+                t.update(config)
+                return
+        # Not found, add it
+        self.add_tool(tool_name, **config)
 
     def list_tools(self) -> list[str]:
-        """List configured tools."""
-        return list(self._get_tools().keys())
+        """List configured tool names."""
+        tools = self._get_tools()
+        return [t.get("tool_name", "") for t in tools if t.get("tool_name")]
 
     # ----- MCP Client Toolsets -----
 

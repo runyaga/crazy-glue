@@ -15,6 +15,9 @@ welcome_message: |
   - `add suggestion <room-id> <text>` - Add suggestion
   - `remove suggestion <room-id> <idx>` - Remove suggestion
   - `list tools` - Show available tools
+  - `generate tool <room-id> <name> <desc>` - Generate custom tool
+  - `apply tool` - Apply staged tool
+  - `discard tool` - Discard staged tool
   - `add tool <room-id> <tool-name>` - Add tool
   - `remove tool <room-id> <tool-name>` - Remove tool
   - `list mcp` - Show MCP toolset options
@@ -23,6 +26,11 @@ welcome_message: |
   - `remove mcp <room-id> <name>` - Remove MCP toolset
   - `list secrets` - Show configured secrets
   - `check secret <name>` - Check if secret is resolved
+  - `list prompts` - Show saved prompts
+  - `show prompt <name>` - Display prompt content
+  - `add prompt <name> <content>` - Create new prompt
+  - `remove prompt <name>` - Delete a prompt
+  - `use prompt <room-id> <name>` - Apply prompt to room
   - `enable mcp-server <room-id>` - Enable room as MCP server
   - `disable mcp-server <room-id>` - Disable MCP server mode
   - `refresh` - Scan codebase and build knowledge graph
@@ -37,12 +45,15 @@ suggestions:
   - "find BrainstormAgent"
   - "show joker reference"
   - "create Calculator room for doing math"
+  - "generate tool my-room list_files List folder contents"
+  - "list prompts"
 
 agent:
   kind: "factory"
   factory_name: "crazy_glue.factories.analysis_factory.create_analysis_agent"
   with_agent_config: true
   extra_config:
+    model_name: "gpt-oss:latest"
     map_path: "db/project_map.json"
     roots:
       - "src/crazy_glue"

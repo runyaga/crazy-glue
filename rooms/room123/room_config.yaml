@@ -1,0 +1,18 @@
+id: room123
+name: room123
+description: create room123 room
+welcome_message: |
+  Welcome to the room123 room!
+
+  create room123 room
+suggestions:
+- What can you help me with?
+- Show me an example
+agent:
+  kind: default
+  model_name: gpt-oss:latest
+  system_prompt: |
+    You are a helpful assistant in the room123 room.
+    Your purpose: create room123 room
+tools:
+- tool_name: crazy_glue.tools.big_filename.big_filename

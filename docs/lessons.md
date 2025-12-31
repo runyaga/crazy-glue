@@ -941,6 +941,468 @@ Missing `description`, `welcome_message`, or `agent` block will fail validation.
 
 ---
 
+## System Architect Room: Runtime Room Management
+
+### Overview
+
+The System Architect room allows introspecting and managing rooms at runtime,
+including creating rooms, editing configs, managing tools, and storing prompts.
+
+### Key Learning: RoomConfig Doesn't Accept Arbitrary Fields
+
+**Problem**: Tried to track managed rooms with a `_managed_by` field in YAML:
+
+```yaml
+id: "calculator"
+_managed_by: "analysis"  # BREAKS!
+```
+
+**Error**: `TypeError: RoomConfig.__init__() got unexpected keyword argument`
+
+**Solution**: External tracking file (`db/managed_rooms.json`):
+
+```json
+{"managed_rooms": ["calculator", "my-room"]}
+```
+
+### Key Learning: Tool Config Format
+
+**Problem**: Tried to wire custom tools as:
+
+```yaml
+tools:
+  custom:src.crazy_glue.tools.my_tool: {}  # WRONG!
+```
+
+**Error**: `'str' object has no attribute 'get'`
+
+**Root Cause**: Soliplex `tools:` expects a **list** of dicts with `tool_name`:
+
+```yaml
+tools:
+  - tool_name: "soliplex.tools.search_documents"
+    rag_lancedb_stem: "my_db"
+```
+
+**Key Insight**: Tools must be registered in `TOOL_CONFIG_CLASSES_BY_TOOL_NAME`.
+Custom module imports are NOT supported without modifying soliplex core.
+
+**Solution**: Tool generation writes files but does NOT auto-wire to room configs.
+
+### Key Learning: Room Name Parsing
+
+**Problem**: "create room9" extracted "NewRoom" instead of "room9".
+
+**Root Cause**: Split on "room" word: `"create room9".split("room")` -> `["create ", "9"]`
+
+**Solution**: Parse word-by-word, looking for standalone "room":
+
+```python
+for i in range(start_idx, len(words)):
+    if words[i].lower() == "room":  # Standalone word
+        break
+    name_words.append(words[i])
+```
+
+### File-Based State Storage Pattern
+
+Used JSON files in `db/` for simple persistence:
+
+| File | Purpose |
+|------|---------|
+| `db/managed_rooms.json` | Track architect-created rooms |
+| `db/pending_tool.json` | Stage tools for preview/approval |
+| `db/prompts.json` | Prompt library storage |
+
+**Benefits**: No database, easy to inspect/debug, survives restarts.
+
+### Two-Step Tool Generation Workflow
+
+```
+1. generate tool <room> <name> <desc>  -> LLM generates code
+2. [optional] Send refinement text     -> Regenerate with feedback
+3. apply tool | discard tool           -> Finalize
+```
+
+**Benefits**: Prevents accidental file creation, allows iteration.
+
+### Key Learning: Sanitize User Input for Python Identifiers
+
+**Problem**: User-provided tool names like `big-filename` can't be used directly
+as Python function names (hyphens, spaces, special chars, keywords are invalid).
+
+**Solution**: Create a comprehensive `_sanitize_identifier` function:
+
+```python
+def _sanitize_identifier(name: str) -> tuple[str, str | None]:
+    """Convert user-provided name to valid Python identifier."""
+    import keyword, re
+
+    if not name or not name.strip():
+        return "", "Name cannot be empty"
+
+    result = name.strip().lower()
+    result = re.sub(r"[-\s.]+", "_", result)  # Separators → underscore
+    result = re.sub(r"[^a-z0-9_]", "", result)  # Remove invalid chars
+    result = re.sub(r"_+", "_", result)  # Collapse underscores
+    result = result.strip("_")
+
+    if result and result[0].isdigit():
+        result = f"_{result}"  # Prefix leading digit
+
+    if keyword.iskeyword(result):
+        result = f"{result}_tool"  # Suffix keywords
+
+    if not result.isidentifier():
+        return "", f"Could not create valid identifier from '{name}'"
+
+    return result, None
+```
+
+**Key points**:
+- Validate early (in `_generate_tool`), not at each usage point
+- Store sanitized name so downstream functions don't re-sanitize
+- Return error tuple for clear error handling
+- Test comprehensively (hyphens, spaces, digits, keywords, special chars)
+
+### Key Learning: Use LLM for Tool Code Generation
+
+**Problem**: Static f-string templates can't handle:
+- Arbitrary input parameters (not just `path`)
+- Domain-specific output models (not generic success/data/error)
+- Actual implementation logic (not TODO placeholders)
+
+**Solution**: Use the LLM to generate tool code dynamically:
+
+```python
+async def _generate_tool_code(self, name: str, description: str) -> str:
+    prompt = f"""Generate a Python tool for pydantic-ai.
+
+**Tool name**: {func_name}
+**Description**: {description}
+
+**Requirements**:
+1. Create a Pydantic model for structured output
+2. Create an async function that returns the model
+3. Implement the ACTUAL logic, not a placeholder
+4. Handle errors gracefully
+"""
+    agent = Agent(model, output_type=str)
+    result = await agent.run(prompt)
+    return result.output
+```
+
+**Key Points**:
+- LLM generates domain-specific Pydantic models with meaningful fields
+- LLM implements actual logic based on the description
+- Refinement feedback can be passed for iterative improvement
+- Still validate with AST, compile, import, and check-config after generation
+
+### Tool Application Process (Critical)
+
+When applying a generated tool, the full process must be:
+
+1. **Validate Python syntax** - `ast.parse(code)`
+2. **Validate compilation** - `compile(code, path, "exec")`
+3. **Write tool file** to `src/crazy_glue/tools/<name>.py`
+4. **Validate import** - `importlib.import_module(module)` to catch runtime errors
+5. **Wire into room YAML** - Add to `tools:` list with `tool_name`
+6. **Run check-config** - Validate the entire configuration
+7. **Rollback on failure** - Remove from YAML and delete file if check fails
+
+```python
+def _apply_pending_tool(self) -> dict:
+    # 1. AST validate
+    ast.parse(code)
+
+    # 2. Compile validate
+    compile(code, str(file_path), "exec")
+
+    # 3. Write file
+    file_path.write_text(code)
+
+    # 4. Import validate (catches runtime import errors)
+    try:
+        importlib.import_module(tool_module)
+    except ImportError as e:
+        file_path.unlink()  # Cleanup
+        return {"status": "error", "message": f"Import failed: {e}"}
+
+    # 5. Wire to room
+    editor.add_tool(tool_module)
+    editor.save()
+
+    # 6. Check-config
+    errors = editor.validate()
+    if errors:
+        # 7. Rollback
+        editor.remove_tool(tool_module)
+        editor.save()
+        file_path.unlink()
+        return {"status": "error", "message": errors}
+```
+
+**Key Insight**: The `tools:` section in room YAML must be a **list** format:
+
+```yaml
+tools:
+  - tool_name: "crazy_glue.tools.my_tool"
+  - tool_name: "soliplex.tools.search_documents"
+    rag_lancedb_stem: "my_db"
+```
+
+NOT a dict format (which was our initial mistake):
+
+```yaml
+# WRONG!
+tools:
+  my_tool: {}
+```
+
+### Critical: Module Path Must NOT Include "src/"
+
+**Problem**: Tool file at `src/crazy_glue/tools/my_tool.py` was registered as
+`src.crazy_glue.tools.my_tool` which fails with:
+
+```
+ModuleNotFoundError: No module named 'src'
+```
+
+**Root Cause**: The `src/` directory is a Python packaging convention (src layout),
+NOT part of the Python module path. Python imports from the package root.
+
+**Solution**: Strip `src/` prefix when building module path:
+
+```python
+file_path_str = "src/crazy_glue/tools/my_tool.py"
+module_path = file_path_str
+if module_path.startswith("src/"):
+    module_path = module_path[4:]  # Remove "src/"
+tool_module = module_path.replace("/", ".").replace(".py", "")
+# Result: "crazy_glue.tools.my_tool"
+```
+
+```yaml
+# CORRECT
+tools:
+  - tool_name: "crazy_glue.tools.my_tool"
+
+# WRONG - "src" is not a module!
+tools:
+  - tool_name: "src.crazy_glue.tools.my_tool"
+```
+
+### Key Learning: Tool Names Must Be Full Dotted Path to Function
+
+**Problem**: Registered tool as `crazy_glue.tools.big_file` (module path) but
+soliplex expects `crazy_glue.tools.big_file.big_file` (function path).
+
+**Symptom**: Tool doesn't work or error about missing callable.
+
+**Root Cause**: Soliplex tool registration expects a dotted path that resolves
+to a **callable function**, not just a module.
+
+**Solution**: Build full dotted path and validate function exists:
+
+```python
+# Build module path
+tool_module = "crazy_glue.tools.big_file"  # Module
+func_name = "big_file"  # Function name (same as tool name)
+tool_dotted_path = f"{tool_module}.{func_name}"  # Full path
+
+# Validate function exists and is callable
+module = importlib.import_module(tool_module)
+tool_func = getattr(module, func_name, None)
+if tool_func is None:
+    raise ValueError(f"Function '{func_name}' not found in {tool_module}")
+if not callable(tool_func):
+    raise ValueError(f"'{func_name}' in {tool_module} is not callable")
+
+# Register with full path
+editor.add_tool(tool_dotted_path)  # "crazy_glue.tools.big_file.big_file"
+```
+
+```yaml
+# CORRECT - full path to function
+tools:
+  - tool_name: crazy_glue.tools.big_file.big_file
+
+# WRONG - just module path
+tools:
+  - tool_name: crazy_glue.tools.big_file
+```
+
+### Key Learning: Validate YAML Before Saving
+
+**Problem**: Generated scaffolds or modified configs can have broken YAML
+(e.g., improper use of `|` for multi-line strings, missing indentation).
+
+**Solution**: Always validate YAML with `yaml.safe_load()` before writing:
+
+```python
+# Before writing any YAML file
+if rel_path.endswith(".yaml") or rel_path.endswith(".yml"):
+    try:
+        yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        errors.append(f"Invalid YAML in {rel_path}: {e}")
+        continue  # Skip writing invalid file
+
+# After saving (if modifying via RoomConfigEditor)
+try:
+    yaml.safe_load(editor.config_path.read_text())
+except yaml.YAMLError as e:
+    # Rollback changes
+    return {"status": "error", "message": f"Invalid YAML after save: {e}"}
+```
+
+**Common YAML Issues**:
+- Multi-line strings without `|` or `>` indicators
+- Incorrect indentation for nested blocks
+- Unquoted special characters
+- Missing colons or values
+
+### Key Learning: Tool Descriptions Come From Function Docstrings
+
+**Problem**: Tool validation fails with:
+```
+1 validation error for Tool
+tool_description
+  Input should be a valid string [type=string_type, input_value=None]
+```
+
+**Root Cause**: Soliplex has two different classes:
+- `soliplex.config.ToolConfig` - runtime config (no `tool_description` field)
+- `soliplex.models.Tool` - Pydantic validation model (requires `tool_description`)
+
+The validation model extracts `tool_description` from the **function's docstring**.
+If the function has no docstring, validation fails.
+
+**Broken Code** (no docstring on function):
+```python
+async def big_filename(path: str = ".") -> BigFilenameResult:
+    try:  # No docstring! Validation will fail.
+        ...
+```
+
+**Working Code** (docstring on function):
+```python
+async def big_filename(path: str = ".") -> BigFilenameResult:
+    """Find the file or folder with the longest filename."""
+    try:
+        ...
+```
+
+**Key Point**: The docstring must be on the **function itself**, not just at
+module level. pydantic-ai extracts the function's docstring for the tool
+description.
+
+**Best Practice**: When generating tools with LLM, ensure the prompt explicitly
+requires a docstring on the async function - this becomes the tool's description.
+
+### Key Learning: YAML Dump Doesn't Preserve Block Style
+
+**Problem**: When using `yaml.dump()` to save YAML files, multi-line strings
+lose their block style (`|`) and become quoted strings with embedded newlines:
+
+```yaml
+# Before (scaffold template)
+welcome_message: |
+  Welcome to the room!
+
+# After yaml.dump()
+welcome_message: 'Welcome to the room!
+
+  '
+```
+
+**Root Cause**: PyYAML's default dumper uses the most compact representation,
+which for multi-line strings is quoted style with literal `\n` characters.
+
+**Solution**: Create a custom dumper with a string representer that detects
+newlines and uses block style:
+
+```python
+def _str_representer(dumper: yaml.Dumper, data: str) -> yaml.Node:
+    """Use block style (|) for multi-line strings."""
+    tag = "tag:yaml.org,2002:str"
+    if "\n" in data:
+        return dumper.represent_scalar(tag, data, style="|")
+    return dumper.represent_scalar(tag, data)
+
+class _BlockStyleDumper(yaml.SafeDumper):
+    pass
+
+_BlockStyleDumper.add_representer(str, _str_representer)
+
+# Usage
+content = yaml.dump(data, Dumper=_BlockStyleDumper, ...)
+```
+
+**Result**: Multi-line strings now preserve readable block style:
+
+```yaml
+welcome_message: |
+  Welcome to the room!
+```
+
+**Note**: Tree-sitter is NOT needed for this - PyYAML's custom representers
+handle it cleanly.
+
+### Key Learning: Use Structured Output for LLM Multi-Value Generation
+
+**Problem**: Need LLM to generate both code AND a summary/description, but
+simple string output only gives one value.
+
+**Initial approach** (limited):
+```python
+agent: Agent[None, str] = Agent(model, output_type=str)
+result = await agent.run(prompt)
+code = result.output  # Only get code, no description
+```
+
+**Solution**: Use Pydantic structured output to get multiple values:
+
+```python
+import pydantic
+from pydantic_ai import Agent
+
+class GeneratedTool(pydantic.BaseModel):
+    """LLM output containing generated tool code and description."""
+    code: str = pydantic.Field(
+        description="Complete Python code for the tool"
+    )
+    summary: str = pydantic.Field(
+        description="Concise 1-sentence tool description"
+    )
+
+# Use structured output
+agent: Agent[None, GeneratedTool] = Agent(
+    model, output_type=GeneratedTool
+)
+result = await agent.run(prompt)
+tool_output = result.output
+
+code = tool_output.code      # Generated Python code
+summary = tool_output.summary  # Concise description
+```
+
+**Benefits**:
+- Single LLM call produces multiple values
+- Pydantic validates the output structure
+- Field descriptions guide the LLM
+- Easy to extend with more fields (e.g., `input_type`, `output_type`)
+
+**Prompt guidance**: Tell the LLM what each field should contain:
+
+```
+Provide:
+1. **code**: Complete Python code (no markdown fences)
+2. **summary**: Concise 1-sentence description (e.g., "Find large files")
+```
+
+---
+
 ## Future Improvements
 
 1. Fix `compute_state_delta` to use `add` for new keys instead of `replace`

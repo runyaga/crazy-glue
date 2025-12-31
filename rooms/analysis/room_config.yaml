@@ -21,6 +21,8 @@ welcome_message: |
   - `add mcp http <room-id> <name> <url>` - Add HTTP MCP
   - `add mcp stdio <room-id> <name> <cmd>` - Add stdio MCP
   - `remove mcp <room-id> <name>` - Remove MCP toolset
+  - `list secrets` - Show configured secrets
+  - `check secret <name>` - Check if secret is resolved
   - `refresh` - Scan codebase and build knowledge graph
   - `find <name>` - Search for classes, functions, or modules
   - `show joker|faux|brainstorm` - View reference implementations

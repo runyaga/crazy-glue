@@ -463,6 +463,36 @@ class AnalysisAgent:
         except Exception as e:
             return {"status": "error", "message": f"Failed: {e}"}
 
+    def _list_secrets(self) -> list[dict]:
+        """List configured secrets (names only, not values)."""
+        secrets = []
+        for secret in self.installation.secrets:
+            resolved = secret._resolved is not None
+            secrets.append({
+                "name": secret.secret_name,
+                "resolved": resolved,
+                "sources": [type(s).__name__ for s in secret.sources],
+            })
+        return secrets
+
+    def _check_secret(self, name: str) -> dict:
+        """Check if a secret is configured and resolved."""
+        for secret in self.installation.secrets:
+            if secret.secret_name == name:
+                resolved = secret._resolved is not None
+                return {
+                    "name": name,
+                    "configured": True,
+                    "resolved": resolved,
+                    "sources": [type(s).__name__ for s in secret.sources],
+                }
+        return {
+            "name": name,
+            "configured": False,
+            "resolved": False,
+            "sources": [],
+        }
+
     def _inspect_room(self, room_id: str) -> dict | None:
         """Get detailed info about a specific room."""
         room_cfg = self.installation.room_configs.get(room_id)
@@ -1160,6 +1190,47 @@ agent:
                     err = f"## Error\n\n{result['message']}\n"
                     response_parts.append(err)
 
+        elif prompt_lower == "list secrets":
+            delta = "\nListing configured secrets..."
+            think_part.content += delta
+            tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+            yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+            secrets = self._list_secrets()
+            response_parts.append("## Configured Secrets\n\n")
+            if secrets:
+                for s in secrets:
+                    status = "resolved" if s["resolved"] else "NOT resolved"
+                    response_parts.append(f"- `{s['name']}`: {status}\n")
+                    sources = ", ".join(s["sources"])
+                    response_parts.append(f"  - Sources: {sources}\n")
+            else:
+                response_parts.append("No secrets configured.\n")
+
+        elif "check secret" in prompt_lower:
+            # Parse: check secret <name>
+            parts = user_prompt.split()
+            if len(parts) < 3:
+                response_parts.append("Usage: `check secret <name>`\n")
+            else:
+                name = parts[2]
+                delta = f"\nChecking secret: {name}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                info = self._check_secret(name)
+                response_parts.append(f"## Secret: {name}\n\n")
+                if info["configured"]:
+                    status = "resolved" if info["resolved"] else "NOT resolved"
+                    response_parts.append(f"**Status**: {status}\n")
+                    sources = ", ".join(info["sources"])
+                    response_parts.append(f"**Sources**: {sources}\n")
+                else:
+                    response_parts.append("**Not configured**\n\n")
+                    hint = "Add to installation.yaml secrets section.\n"
+                    response_parts.append(hint)
+
         elif "inspect" in prompt_lower:
             # Extract room id from prompt
             words = user_prompt.split()
@@ -1305,6 +1376,9 @@ agent:
             response_parts.append("- `add mcp http <id> <name> <url>`\n")
             response_parts.append("- `add mcp stdio <id> <name> <cmd>`\n")
             response_parts.append("- `remove mcp <id> <name>`\n\n")
+            response_parts.append("**Secrets:**\n")
+            response_parts.append("- `list secrets` - Show secrets\n")
+            response_parts.append("- `check secret <name>` - Check status\n\n")
             response_parts.append("**Codebase Analysis:**\n")
             response_parts.append("- `refresh` - Build knowledge graph\n")
             response_parts.append("- `find <name>` - Search entities\n")

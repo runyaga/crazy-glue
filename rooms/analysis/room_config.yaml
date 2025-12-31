@@ -17,6 +17,10 @@ welcome_message: |
   - `list tools` - Show available tools
   - `add tool <room-id> <tool-name>` - Add tool
   - `remove tool <room-id> <tool-name>` - Remove tool
+  - `list mcp` - Show MCP toolset options
+  - `add mcp http <room-id> <name> <url>` - Add HTTP MCP
+  - `add mcp stdio <room-id> <name> <cmd>` - Add stdio MCP
+  - `remove mcp <room-id> <name>` - Remove MCP toolset
   - `refresh` - Scan codebase and build knowledge graph
   - `find <name>` - Search for classes, functions, or modules
   - `show joker|faux|brainstorm` - View reference implementations

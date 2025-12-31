@@ -393,6 +393,76 @@ class AnalysisAgent:
         except Exception as e:
             return {"status": "error", "message": f"Failed: {e}"}
 
+    def _manage_mcp(
+        self,
+        room_id: str,
+        action: str,
+        name: str,
+        kind: str = None,
+        url: str = None,
+        command: str = None,
+    ) -> dict:
+        """Add or remove an MCP client toolset from a room.
+
+        Args:
+            room_id: The room to modify
+            action: "add" or "remove"
+            name: MCP toolset name
+            kind: "http" or "stdio" (for add)
+            url: URL for HTTP MCP (for add)
+            command: Command for stdio MCP (for add)
+
+        Returns:
+            Dict with status and any errors.
+        """
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        try:
+            if action == "add":
+                if kind == "http":
+                    if not url:
+                        return {"status": "error", "message": "URL required"}
+                    editor.add_mcp_http(name, url)
+                elif kind == "stdio":
+                    if not command:
+                        msg = "Command required for stdio MCP"
+                        return {"status": "error", "message": msg}
+                    editor.add_mcp_stdio(name, command)
+                else:
+                    msg = f"Unknown MCP kind: {kind}. Use http or stdio."
+                    return {"status": "error", "message": msg}
+
+                editor.save()
+
+                # Validate
+                errors = editor.validate()
+                if errors:
+                    return {
+                        "status": "warning",
+                        "message": f"Added but validation issues: {errors}",
+                    }
+
+                msg = f"Added MCP {name} ({kind}) to {room_id}"
+                return {"status": "success", "message": msg}
+
+            elif action == "remove":
+                if editor.remove_mcp(name):
+                    editor.save()
+                    msg = f"Removed MCP {name} from {room_id}"
+                    return {"status": "success", "message": msg}
+                else:
+                    msg = f"MCP {name} not found in {room_id}"
+                    return {"status": "error", "message": msg}
+
+            else:
+                msg = f"Unknown action: {action}"
+                return {"status": "error", "message": msg}
+
+        except Exception as e:
+            return {"status": "error", "message": f"Failed: {e}"}
+
     def _inspect_room(self, room_id: str) -> dict | None:
         """Get detailed info about a specific room."""
         room_cfg = self.installation.room_configs.get(room_id)
@@ -994,6 +1064,102 @@ agent:
                 else:
                     response_parts.append(f"## Error\n\n{result['message']}\n")
 
+        elif prompt_lower == "list mcp":
+            delta = "\nListing MCP toolset options..."
+            think_part.content += delta
+            tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+            yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+            response_parts.append("## MCP Client Toolsets\n\n")
+            response_parts.append("**HTTP MCP** (`kind: http`)\n")
+            response_parts.append("- Connects to remote MCP servers\n")
+            response_parts.append("- `add mcp http <room> <name> <url>`\n\n")
+            response_parts.append("**Stdio MCP** (`kind: stdio`)\n")
+            response_parts.append("- Runs local MCP server as subprocess\n")
+            response_parts.append("- `add mcp stdio <room> <name> <cmd>`\n")
+
+        elif "add mcp http" in prompt_lower:
+            # Parse: add mcp http <room-id> <name> <url>
+            parts = user_prompt.split()
+            if len(parts) < 6:
+                usage = "Usage: `add mcp http <room-id> <name> <url>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[3]
+                name = parts[4]
+                url = parts[5]
+                delta = f"\nAdding HTTP MCP {name} to {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_mcp(
+                    room_id, "add", name, kind="http", url=url
+                )
+                if result["status"] == "success":
+                    response_parts.append("## Added MCP Toolset\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
+        elif "add mcp stdio" in prompt_lower:
+            # Parse: add mcp stdio <room-id> <name> <command...>
+            parts = user_prompt.split(maxsplit=5)
+            if len(parts) < 6:
+                usage = "Usage: `add mcp stdio <room-id> <name> <command>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[3]
+                name = parts[4]
+                command = parts[5]
+                delta = f"\nAdding stdio MCP {name} to {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_mcp(
+                    room_id, "add", name, kind="stdio", command=command
+                )
+                if result["status"] == "success":
+                    response_parts.append("## Added MCP Toolset\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
+        elif "remove mcp" in prompt_lower:
+            # Parse: remove mcp <room-id> <name>
+            parts = user_prompt.split()
+            if len(parts) < 4:
+                usage = "Usage: `remove mcp <room-id> <name>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                name = parts[3]
+                delta = f"\nRemoving MCP {name} from {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_mcp(room_id, "remove", name)
+                if result["status"] == "success":
+                    response_parts.append("## Removed MCP Toolset\n\n")
+                    response_parts.append(f"{result['message']}\n")
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
         elif "inspect" in prompt_lower:
             # Extract room id from prompt
             words = user_prompt.split()
@@ -1134,6 +1300,11 @@ agent:
             response_parts.append("- `list tools` - Show available tools\n")
             response_parts.append("- `add tool <id> <tool-name>`\n")
             response_parts.append("- `remove tool <id> <tool-name>`\n\n")
+            response_parts.append("**MCP Toolsets:**\n")
+            response_parts.append("- `list mcp` - Show MCP options\n")
+            response_parts.append("- `add mcp http <id> <name> <url>`\n")
+            response_parts.append("- `add mcp stdio <id> <name> <cmd>`\n")
+            response_parts.append("- `remove mcp <id> <name>`\n\n")
             response_parts.append("**Codebase Analysis:**\n")
             response_parts.append("- `refresh` - Build knowledge graph\n")
             response_parts.append("- `find <name>` - Search entities\n")

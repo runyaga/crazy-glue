@@ -23,6 +23,8 @@ welcome_message: |
   - `remove mcp <room-id> <name>` - Remove MCP toolset
   - `list secrets` - Show configured secrets
   - `check secret <name>` - Check if secret is resolved
+  - `enable mcp-server <room-id>` - Enable room as MCP server
+  - `disable mcp-server <room-id>` - Disable MCP server mode
   - `refresh` - Scan codebase and build knowledge graph
   - `find <name>` - Search for classes, functions, or modules
   - `show joker|faux|brainstorm` - View reference implementations

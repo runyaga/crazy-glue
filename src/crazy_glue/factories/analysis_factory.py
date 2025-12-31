@@ -493,6 +493,39 @@ class AnalysisAgent:
             "sources": [],
         }
 
+    def _toggle_mcp_server(self, room_id: str, enable: bool) -> dict:
+        """Enable or disable MCP server mode for a room.
+
+        Args:
+            room_id: The room to modify
+            enable: True to enable, False to disable
+
+        Returns:
+            Dict with status and any errors.
+        """
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        try:
+            editor.set_allow_mcp(enable)
+            editor.save()
+
+            # Validate
+            errors = editor.validate()
+            if errors:
+                return {
+                    "status": "warning",
+                    "message": f"Saved but validation issues: {errors}",
+                }
+
+            action = "enabled" if enable else "disabled"
+            msg = f"MCP server mode {action} for {room_id}"
+            return {"status": "success", "message": msg}
+
+        except Exception as e:
+            return {"status": "error", "message": f"Failed: {e}"}
+
     def _inspect_room(self, room_id: str) -> dict | None:
         """Get detailed info about a specific room."""
         room_cfg = self.installation.room_configs.get(room_id)
@@ -1231,6 +1264,58 @@ agent:
                     hint = "Add to installation.yaml secrets section.\n"
                     response_parts.append(hint)
 
+        elif "enable mcp-server" in prompt_lower:
+            # Parse: enable mcp-server <room-id>
+            parts = user_prompt.split()
+            if len(parts) < 3:
+                usage = "Usage: `enable mcp-server <room-id>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                delta = f"\nEnabling MCP server mode for {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._toggle_mcp_server(room_id, enable=True)
+                if result["status"] == "success":
+                    response_parts.append("## MCP Server Enabled\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
+        elif "disable mcp-server" in prompt_lower:
+            # Parse: disable mcp-server <room-id>
+            parts = user_prompt.split()
+            if len(parts) < 3:
+                usage = "Usage: `disable mcp-server <room-id>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                delta = f"\nDisabling MCP server mode for {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._toggle_mcp_server(room_id, enable=False)
+                if result["status"] == "success":
+                    response_parts.append("## MCP Server Disabled\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    err = f"## Error\n\n{result['message']}\n"
+                    response_parts.append(err)
+
         elif "inspect" in prompt_lower:
             # Extract room id from prompt
             words = user_prompt.split()
@@ -1379,6 +1464,9 @@ agent:
             response_parts.append("**Secrets:**\n")
             response_parts.append("- `list secrets` - Show secrets\n")
             response_parts.append("- `check secret <name>` - Check status\n\n")
+            response_parts.append("**MCP Server Mode:**\n")
+            response_parts.append("- `enable mcp-server <id>`\n")
+            response_parts.append("- `disable mcp-server <id>`\n\n")
             response_parts.append("**Codebase Analysis:**\n")
             response_parts.append("- `refresh` - Build knowledge graph\n")
             response_parts.append("- `find <name>` - Search entities\n")

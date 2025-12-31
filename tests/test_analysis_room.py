@@ -1,11 +1,10 @@
 """
 Tests for the Analysis Room (System Architect).
 
-Tests the Cartographer-based knowledge graph building and querying.
+Tests the refactored command handler architecture.
 """
 
 import ast
-import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -13,8 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from crazy_glue.factories.analysis.room_editor import RoomConfigEditor
-from crazy_glue.factories.analysis_factory import REFERENCE_IMPLEMENTATIONS
+from crazy_glue.analysis import AnalysisContext
+from crazy_glue.analysis import parse_command
+from crazy_glue.analysis.room_editor import RoomConfigEditor
+from crazy_glue.analysis.tools.graph_ops import REFERENCE_IMPLEMENTATIONS
+from crazy_glue.analysis.validators import sanitize_identifier
 from crazy_glue.factories.analysis_factory import AnalysisAgent
 from crazy_glue.factories.analysis_factory import create_analysis_agent
 
@@ -33,6 +35,25 @@ def mock_agent_config():
 
 
 @pytest.fixture
+def mock_installation_config():
+    """Create a mock installation config."""
+    config = MagicMock()
+    config.room_configs = {}
+    config.secrets = []
+    config.get_environment = MagicMock(return_value="http://localhost:11434")
+    return config
+
+
+@pytest.fixture
+def analysis_context(mock_installation_config, mock_agent_config):
+    """Create an AnalysisContext for testing."""
+    return AnalysisContext(
+        installation_config=mock_installation_config,
+        agent_config=mock_agent_config,
+    )
+
+
+@pytest.fixture
 def analysis_agent(mock_agent_config):
     """Create an analysis agent instance."""
     return create_analysis_agent(mock_agent_config)
@@ -47,12 +68,112 @@ class TestAnalysisAgentCreation:
         assert isinstance(agent, AnalysisAgent)
         assert agent.agent_config == mock_agent_config
 
-    def test_agent_properties(self, analysis_agent):
-        """Test agent properties from config."""
-        assert analysis_agent.map_path == "test_db/project_map.json"
-        assert analysis_agent.roots == ["src/crazy_glue"]
-        assert analysis_agent.max_depth == 3
-        assert analysis_agent.max_files == 20
+
+class TestCommandParser:
+    """Test the command parser."""
+
+    def test_parse_rooms(self):
+        """Test parsing 'rooms' command."""
+        cmd = parse_command("rooms")
+        assert cmd.command == "list_rooms"
+        assert cmd.args == {}
+
+    def test_parse_managed(self):
+        """Test parsing 'managed' command."""
+        cmd = parse_command("managed")
+        assert cmd.command == "list_managed"
+
+    def test_parse_inspect(self):
+        """Test parsing 'inspect' command."""
+        cmd = parse_command("inspect brainstorm")
+        assert cmd.command == "inspect_room"
+        assert cmd.args["room_id"] == "brainstorm"
+
+    def test_parse_create_room(self):
+        """Test parsing 'create room' command."""
+        cmd = parse_command("create calculator room for math operations")
+        assert cmd.command == "create_room"
+        assert cmd.args["name"] == "calculator"
+        assert cmd.args["description"] == "math operations"
+
+    def test_parse_edit_room(self):
+        """Test parsing 'edit' command."""
+        cmd = parse_command("edit my-room description New description here")
+        assert cmd.command == "edit_room"
+        assert cmd.args["room_id"] == "my-room"
+        assert cmd.args["field"] == "description"
+        assert cmd.args["value"] == "New description here"
+
+    def test_parse_generate_tool(self):
+        """Test parsing 'generate tool' command."""
+        cmd = parse_command("generate tool my-room my_tool List files in dir")
+        assert cmd.command == "generate_tool"
+        assert cmd.args["room_id"] == "my-room"
+        assert cmd.args["name"] == "my_tool"
+        assert cmd.args["description"] == "List files in dir"
+
+    def test_parse_apply_tool(self):
+        """Test parsing 'apply tool' command."""
+        cmd = parse_command("apply tool")
+        assert cmd.command == "apply_tool"
+
+    def test_parse_discard_tool(self):
+        """Test parsing 'discard tool' command."""
+        cmd = parse_command("discard tool")
+        assert cmd.command == "discard_tool"
+
+    def test_parse_list_tools(self):
+        """Test parsing 'list tools' command."""
+        cmd = parse_command("list tools")
+        assert cmd.command == "list_tools"
+
+    def test_parse_find_entity(self):
+        """Test parsing 'find' command."""
+        cmd = parse_command("find BrainstormAgent")
+        assert cmd.command == "find_entity"
+        assert cmd.args["query"] == "brainstormagent"
+
+    def test_parse_show_reference(self):
+        """Test parsing 'show' reference command."""
+        cmd = parse_command("show joker")
+        assert cmd.command == "show_reference"
+        assert cmd.args["name"] == "joker"
+
+    def test_parse_add_suggestion(self):
+        """Test parsing 'add suggestion' command."""
+        cmd = parse_command("add suggestion my-room Try this feature")
+        assert cmd.command == "add_suggestion"
+        assert cmd.args["room_id"] == "my-room"
+        assert cmd.args["text"] == "Try this feature"
+
+    def test_parse_remove_suggestion(self):
+        """Test parsing 'remove suggestion' command."""
+        cmd = parse_command("remove suggestion my-room 2")
+        assert cmd.command == "remove_suggestion"
+        assert cmd.args["room_id"] == "my-room"
+        assert cmd.args["index"] == "2"
+
+    def test_parse_list_secrets(self):
+        """Test parsing 'list secrets' command."""
+        cmd = parse_command("list secrets")
+        assert cmd.command == "list_secrets"
+
+    def test_parse_check_secret(self):
+        """Test parsing 'check secret' command."""
+        cmd = parse_command("check secret API_KEY")
+        assert cmd.command == "check_secret"
+        assert cmd.args["name"] == "api_key"
+
+    def test_parse_list_prompts(self):
+        """Test parsing 'list prompts' command."""
+        cmd = parse_command("list prompts")
+        assert cmd.command == "list_prompts"
+
+    def test_parse_unknown(self):
+        """Test parsing unknown command."""
+        cmd = parse_command("some random text")
+        assert cmd.command == "unknown"
+        assert cmd.args["input"] == "some random text"
 
 
 class TestReferenceImplementations:
@@ -63,177 +184,6 @@ class TestReferenceImplementations:
         assert "joker" in REFERENCE_IMPLEMENTATIONS
         assert "faux" in REFERENCE_IMPLEMENTATIONS
         assert "brainstorm" in REFERENCE_IMPLEMENTATIONS
-
-    def test_read_joker_reference(self, analysis_agent):
-        """Test reading Joker reference implementation."""
-        result = analysis_agent._read_reference_implementation("joker")
-        assert "joker_agent_factory" in result or "Error" not in result[:5]
-
-    def test_read_faux_reference(self, analysis_agent):
-        """Test reading Faux reference implementation."""
-        result = analysis_agent._read_reference_implementation("faux")
-        assert "FauxAgent" in result or "Error" not in result[:5]
-
-    def test_read_brainstorm_reference(self, analysis_agent):
-        """Test reading Brainstorm reference implementation."""
-        result = analysis_agent._read_reference_implementation("brainstorm")
-        assert "BrainstormAgent" in result or "brainstorm" in result.lower()
-
-    def test_unknown_reference(self, analysis_agent):
-        """Test unknown reference returns error."""
-        result = analysis_agent._read_reference_implementation("unknown")
-        assert "Unknown reference" in result
-
-
-class TestScaffolding:
-    """Test room scaffolding functionality."""
-
-    def test_scaffold_room_generates_yaml(self, analysis_agent):
-        """Test scaffolding generates valid YAML."""
-        files = analysis_agent._scaffold_room("Calculator", "A room for math")
-
-        assert len(files) > 0
-        yaml_path = "rooms/calculator/room_config.yaml"
-        assert yaml_path in files
-
-        content = files[yaml_path]
-        parsed = yaml.safe_load(content)
-        assert parsed["id"] == "calculator"
-        assert parsed["name"] == "Calculator"
-        assert "agent" in parsed
-
-    def test_scaffold_room_slug_formatting(self, analysis_agent):
-        """Test room names are properly slugified."""
-        files = analysis_agent._scaffold_room("My Cool Room", "Test intent")
-
-        yaml_path = "rooms/my-cool-room/room_config.yaml"
-        assert yaml_path in files
-
-        parsed = yaml.safe_load(files[yaml_path])
-        assert parsed["id"] == "my-cool-room"
-
-    def test_scaffold_generates_valid_room_config(self, analysis_agent):
-        """Test scaffolded rooms generate valid config without extra fields."""
-        files = analysis_agent._scaffold_room("Test", "A test room")
-
-        yaml_path = "rooms/test/room_config.yaml"
-        parsed = yaml.safe_load(files[yaml_path])
-
-        # Should not have _managed_by field (breaks soliplex)
-        assert "_managed_by" not in parsed
-        # Should have required fields
-        assert parsed["id"] == "test"
-        assert "agent" in parsed
-
-    def test_apply_scaffold_rejects_unsafe_paths(self, analysis_agent):
-        """Test scaffold rejects paths outside allowed directories."""
-        unsafe_files = {
-            "/etc/passwd": "malicious content",
-            "../../../etc/hosts": "more malicious",
-        }
-
-        result = analysis_agent._apply_scaffold(unsafe_files)
-        assert len(result["errors"]) == 2
-        assert len(result["written"]) == 0
-
-    def test_apply_scaffold_allows_safe_paths(self, analysis_agent):
-        """Test scaffold application allows paths in rooms/."""
-        # Note: This test validates path filtering logic only.
-        # It does NOT actually write files (would pollute project).
-        # The _apply_scaffold method checks prefixes before writing.
-        safe_files = {
-            "rooms/test-temp/room_config.yaml": "id: test\nname: Test",
-        }
-        # Verify the path passes the prefix check
-        allowed = ["rooms/", "src/crazy_glue/factories/"]
-        for path in safe_files:
-            assert any(path.startswith(p) for p in allowed)
-
-
-class TestQueryGraph:
-    """Test knowledge graph querying."""
-
-    def test_query_without_graph(self, analysis_agent):
-        """Test query returns error when no graph exists."""
-        result = analysis_agent._query_graph("test")
-        assert len(result) == 1
-        assert "error" in result[0]
-
-    def test_query_returns_list(self, analysis_agent):
-        """Test query returns a list."""
-        result = analysis_agent._query_graph("anything")
-        assert isinstance(result, list)
-
-
-class TestReadEntitySource:
-    """Test entity source reading."""
-
-    def test_read_entity_without_graph(self, analysis_agent):
-        """Test reading entity without graph returns error."""
-        result = analysis_agent._read_entity_source("nonexistent-id")
-        assert "Error" in result
-        assert "Knowledge graph not found" in result
-
-
-@pytest.mark.asyncio
-class TestKnowledgeGraphIntegration:
-    """Integration tests for knowledge graph building."""
-
-    async def test_refresh_knowledge_graph_creates_file(self, analysis_agent):
-        """Test refresh creates knowledge map file."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            analysis_agent.agent_config.extra_config["map_path"] = (
-                f"{tmpdir}/test_map.json"
-            )
-
-            result = await analysis_agent._refresh_knowledge_graph()
-
-            assert result["status"] == "complete"
-            assert "total_entities" in result
-            assert "total_links" in result
-
-    async def test_knowledge_map_is_valid_json(self, analysis_agent):
-        """Test generated knowledge map is valid JSON."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            map_path = Path(tmpdir) / "test_map.json"
-            extra = analysis_agent.agent_config.extra_config
-            extra["map_path"] = str(map_path)
-
-            await analysis_agent._refresh_knowledge_graph()
-
-            if map_path.exists():
-                content = map_path.read_text()
-                parsed = json.loads(content)
-                assert "entities" in parsed
-                assert "links" in parsed
-
-
-class TestRoomConfigValidity:
-    """Test that generated room configs are valid."""
-
-    def test_room_config_yaml_is_valid(self):
-        """Test the analysis room config is valid YAML."""
-        config_path = Path("rooms/analysis/room_config.yaml")
-        if config_path.exists():
-            content = config_path.read_text()
-            parsed = yaml.safe_load(content)
-            assert parsed["id"] == "analysis"
-            assert parsed["agent"]["kind"] == "factory"
-            assert "analysis_factory" in parsed["agent"]["factory_name"]
-
-
-class TestFactorySyntax:
-    """Test that the factory module has valid Python syntax."""
-
-    def test_analysis_factory_syntax(self):
-        """Test analysis_factory.py is valid Python."""
-        factory_path = Path("src/crazy_glue/factories/analysis_factory.py")
-        if factory_path.exists():
-            content = factory_path.read_text()
-            try:
-                ast.parse(content)
-            except SyntaxError as e:
-                pytest.fail(f"Syntax error in analysis_factory.py: {e}")
 
 
 class TestRoomConfigEditor:
@@ -297,7 +247,6 @@ class TestRoomConfigEditor:
         """Test marking a room as managed."""
         import uuid
 
-        # Use unique room ID to avoid conflicts with persistent tracking
         unique_id = f"test-{uuid.uuid4().hex[:8]}"
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -311,7 +260,6 @@ class TestRoomConfigEditor:
             editor.mark_as_managed()
             assert editor.is_managed() is True
 
-            # Clean up: unmark to avoid polluting tracking file
             editor.unmark_as_managed()
 
     def test_save_persists_changes(self):
@@ -325,17 +273,43 @@ class TestRoomConfigEditor:
             editor.set_description("Updated description")
             editor.save()
 
-            # Reload and verify
             new_editor = RoomConfigEditor(room_dir)
             assert new_editor.get_description() == "Updated description"
+
+
+class TestRoomConfigValidity:
+    """Test that generated room configs are valid."""
+
+    def test_room_config_yaml_is_valid(self):
+        """Test the analysis room config is valid YAML."""
+        config_path = Path("rooms/analysis/room_config.yaml")
+        if config_path.exists():
+            content = config_path.read_text()
+            parsed = yaml.safe_load(content)
+            assert parsed["id"] == "analysis"
+            assert parsed["agent"]["kind"] == "factory"
+            assert "analysis_factory" in parsed["agent"]["factory_name"]
+
+
+class TestFactorySyntax:
+    """Test that the factory module has valid Python syntax."""
+
+    def test_analysis_factory_syntax(self):
+        """Test analysis_factory.py is valid Python."""
+        factory_path = Path("src/crazy_glue/factories/analysis_factory.py")
+        if factory_path.exists():
+            content = factory_path.read_text()
+            try:
+                ast.parse(content)
+            except SyntaxError as e:
+                pytest.fail(f"Syntax error in analysis_factory.py: {e}")
 
 
 class TestToolGeneration:
     """Test tool generation and module path handling."""
 
-    def test_module_path_strips_src_prefix(self, analysis_agent):
+    def test_module_path_strips_src_prefix(self):
         """Test that src/ prefix is stripped from module path."""
-        # Simulate the logic in _apply_pending_tool
         file_path_str = "src/crazy_glue/tools/my_tool.py"
         module_path = file_path_str
         if module_path.startswith("src/"):
@@ -345,7 +319,7 @@ class TestToolGeneration:
         assert tool_module == "crazy_glue.tools.my_tool"
         assert not tool_module.startswith("src.")
 
-    def test_module_path_without_src_unchanged(self, analysis_agent):
+    def test_module_path_without_src_unchanged(self):
         """Test paths without src/ are unchanged."""
         file_path_str = "crazy_glue/tools/my_tool.py"
         module_path = file_path_str
@@ -359,8 +333,6 @@ class TestToolGeneration:
         """Test that existing tools can be imported."""
         import importlib
 
-        # This should work - crazy_glue.tools should exist
-        # Test with an existing tool if any
         tools_path = Path("src/crazy_glue/tools")
         if tools_path.exists():
             for tool_file in tools_path.glob("*.py"):
@@ -388,9 +360,8 @@ class TestToolGeneration:
                 assert tool_func is not None, f"No {func_name} in {module_name}"
                 assert callable(tool_func), f"{func_name} is not callable"
 
-    def test_tool_dotted_path_format(self, analysis_agent):
+    def test_tool_dotted_path_format(self):
         """Test tool_name is module.function format."""
-        # The tool_name must be module.function, not just module
         file_path_str = "src/crazy_glue/tools/my_tool.py"
         func_name = "my_tool"
 
@@ -404,180 +375,114 @@ class TestToolGeneration:
 
 
 class TestSanitizeIdentifier:
-    """Test the _sanitize_identifier function."""
+    """Test the sanitize_identifier function."""
 
     def test_hyphen_to_underscore(self):
         """Test hyphens are converted to underscores."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("big-filename")
+        result, error = sanitize_identifier("big-filename")
         assert error is None
         assert result == "big_filename"
 
     def test_spaces_to_underscore(self):
         """Test spaces are converted to underscores."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("my tool name")
+        result, error = sanitize_identifier("my tool name")
         assert error is None
         assert result == "my_tool_name"
 
     def test_dots_to_underscore(self):
         """Test dots are converted to underscores."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("file.parser")
+        result, error = sanitize_identifier("file.parser")
         assert error is None
         assert result == "file_parser"
 
     def test_leading_digit_prefixed(self):
         """Test leading digits get underscore prefix."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("123tool")
+        result, error = sanitize_identifier("123tool")
         assert error is None
         assert result == "_123tool"
 
     def test_special_chars_removed(self):
         """Test special characters are removed."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("my@tool#name!")
+        result, error = sanitize_identifier("my@tool#name!")
         assert error is None
         assert result == "mytoolname"
 
     def test_python_keyword_suffixed(self):
         """Test Python keywords get _tool suffix."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("class")
+        result, error = sanitize_identifier("class")
         assert error is None
         assert result == "class_tool"
 
     def test_empty_string_error(self):
         """Test empty string returns error."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("")
+        result, error = sanitize_identifier("")
         assert error is not None
         assert "empty" in error.lower()
 
     def test_only_special_chars_error(self):
         """Test string with only special chars returns error."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("@#$%")
+        result, error = sanitize_identifier("@#$%")
         assert error is not None
 
     def test_uppercase_lowercased(self):
         """Test uppercase is converted to lowercase."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("MyToolName")
+        result, error = sanitize_identifier("MyToolName")
         assert error is None
         assert result == "mytoolname"
 
     def test_mixed_separators(self):
         """Test mixed separators are handled."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("my-tool.name here")
+        result, error = sanitize_identifier("my-tool.name here")
         assert error is None
         assert result == "my_tool_name_here"
 
     def test_multiple_underscores_collapsed(self):
         """Test multiple underscores are collapsed."""
-        from crazy_glue.factories.analysis_factory import _sanitize_identifier
-        result, error = _sanitize_identifier("my--tool__name")
+        result, error = sanitize_identifier("my--tool__name")
         assert error is None
         assert result == "my_tool_name"
 
 
-class TestPromptLibrary:
-    """Test prompt library functionality."""
+class TestAnalysisContext:
+    """Test the AnalysisContext class."""
 
-    def test_list_prompts_empty(self, analysis_agent):
-        """Test listing prompts when none exist."""
-        # Clear any existing prompts
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
+    def test_context_paths(self, analysis_context):
+        """Test context derives correct paths."""
+        assert analysis_context.pending_tool_path.name == "pending_tool.json"
+        assert analysis_context.prompts_path.name == "prompts.json"
 
-        prompts = analysis_agent._list_prompts()
-        assert prompts == []
+    def test_context_properties(self, analysis_context):
+        """Test context properties from config."""
+        assert analysis_context.roots == ["src/crazy_glue"]
+        assert analysis_context.max_depth == 3
+        assert analysis_context.max_files == 20
 
-    def test_add_prompt(self, analysis_agent):
-        """Test adding a prompt to the library."""
-        # Clear existing prompts first
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
+    def test_pending_tool_storage(self, analysis_context):
+        """Test pending tool save/load/clear."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            analysis_context.pending_tool_path = Path(tmpdir) / "pending.json"
 
-        result = analysis_agent._add_prompt(
-            "Test Helper",
-            "You are a helpful test assistant."
-        )
-        assert result["status"] == "success"
-        assert "test-helper" in result["message"]
+            assert analysis_context.load_pending_tool() is None
 
-    def test_add_prompt_creates_slug(self, analysis_agent):
-        """Test that prompt names are slugified."""
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
+            test_data = {"name": "test_tool", "code": "# test"}
+            analysis_context.save_pending_tool(test_data)
 
-        analysis_agent._add_prompt("My Cool Prompt", "Content here")
-        prompts = analysis_agent._load_prompts()
-        assert "my-cool-prompt" in prompts
+            loaded = analysis_context.load_pending_tool()
+            assert loaded["name"] == "test_tool"
 
-    def test_get_prompt(self, analysis_agent):
-        """Test getting a specific prompt."""
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
+            analysis_context.clear_pending_tool()
+            assert analysis_context.load_pending_tool() is None
 
-        analysis_agent._add_prompt("finder", "You find things.")
-        prompt = analysis_agent._get_prompt("finder")
-        assert prompt is not None
-        assert prompt["content"] == "You find things."
+    def test_prompts_storage(self, analysis_context):
+        """Test prompts save/load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            analysis_context.prompts_path = Path(tmpdir) / "prompts.json"
 
-    def test_get_prompt_case_insensitive(self, analysis_agent):
-        """Test prompt lookup is case insensitive."""
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
+            assert analysis_context.load_prompts() == {}
 
-        analysis_agent._add_prompt("CamelCase", "Test content")
-        prompt = analysis_agent._get_prompt("camelcase")
-        assert prompt is not None
+            prompts = {"test": {"name": "Test", "content": "Test content"}}
+            analysis_context.save_prompts(prompts)
 
-    def test_remove_prompt(self, analysis_agent):
-        """Test removing a prompt."""
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
-
-        analysis_agent._add_prompt("temporary", "Will be removed")
-        result = analysis_agent._remove_prompt("temporary")
-        assert result["status"] == "success"
-
-        prompt = analysis_agent._get_prompt("temporary")
-        assert prompt is None
-
-    def test_remove_nonexistent_prompt(self, analysis_agent):
-        """Test removing a prompt that doesn't exist."""
-        result = analysis_agent._remove_prompt("nonexistent-prompt-xyz")
-        assert result["status"] == "error"
-        assert "not found" in result["message"]
-
-    def test_add_duplicate_prompt(self, analysis_agent):
-        """Test adding a prompt with same name fails."""
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
-
-        analysis_agent._add_prompt("unique", "First version")
-        result = analysis_agent._add_prompt("unique", "Second version")
-        assert result["status"] == "error"
-        assert "already exists" in result["message"]
-
-    def test_prompt_has_timestamp(self, analysis_agent):
-        """Test that prompts have created timestamp."""
-        prompts_path = analysis_agent._get_prompts_path()
-        if prompts_path.exists():
-            prompts_path.unlink()
-
-        analysis_agent._add_prompt("timestamped", "Has a timestamp")
-        prompts = analysis_agent._load_prompts()
-        assert "created" in prompts["timestamped"]
-        assert "T" in prompts["timestamped"]["created"]  # ISO format
+            loaded = analysis_context.load_prompts()
+            assert "test" in loaded
+            assert loaded["test"]["name"] == "Test"

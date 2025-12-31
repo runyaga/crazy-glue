@@ -14,6 +14,9 @@ import yaml
 
 from crazy_glue.analysis import AnalysisContext
 from crazy_glue.analysis import parse_command
+from crazy_glue.analysis.planner import ExecutionPlan
+from crazy_glue.analysis.planner import PlannedCommand
+from crazy_glue.analysis.planner import is_complex_request
 from crazy_glue.analysis.room_editor import RoomConfigEditor
 from crazy_glue.analysis.tools.graph_ops import REFERENCE_IMPLEMENTATIONS
 from crazy_glue.analysis.validators import sanitize_identifier
@@ -486,3 +489,148 @@ class TestAnalysisContext:
             loaded = analysis_context.load_prompts()
             assert "test" in loaded
             assert loaded["test"]["name"] == "Test"
+
+    def test_pending_plan_storage(self, analysis_context):
+        """Test pending plan save/load/clear."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            analysis_context.pending_plan_path = Path(tmpdir) / "pending_plan.json"
+
+            assert analysis_context.load_pending_plan() is None
+
+            plan_data = {
+                "commands": [{"command": "rooms", "description": "List"}],
+                "clarifications": [],
+                "warnings": [],
+            }
+            analysis_context.save_pending_plan(plan_data)
+
+            loaded = analysis_context.load_pending_plan()
+            assert loaded["commands"][0]["command"] == "rooms"
+
+            analysis_context.clear_pending_plan()
+            assert analysis_context.load_pending_plan() is None
+
+
+class TestComplexityDetector:
+    """Test the is_complex_request heuristic."""
+
+    def test_simple_command_not_complex(self):
+        """Test simple commands are not flagged as complex."""
+        assert is_complex_request("rooms") is False
+        assert is_complex_request("managed") is False
+        assert is_complex_request("inspect my-room") is False
+        assert is_complex_request("list tools") is False
+
+    def test_multiple_verbs_is_complex(self):
+        """Test multiple action verbs trigger complexity."""
+        assert is_complex_request("create room and add tool") is True
+        assert is_complex_request("generate a tool then update description") is True
+
+    def test_conjunction_is_complex(self):
+        """Test conjunctions trigger complexity."""
+        assert is_complex_request("create my-room, add a suggestion") is True
+        assert is_complex_request("do this and then that") is True
+
+    def test_context_references_is_complex(self):
+        """Test pronouns/context refs trigger complexity."""
+        assert is_complex_request("add it to the room") is True
+        assert is_complex_request("update that tool") is True
+
+    def test_long_request_is_complex(self):
+        """Test long requests trigger complexity."""
+        long_prompt = " ".join(["word"] * 20)
+        assert is_complex_request(long_prompt) is True
+
+    def test_short_request_not_complex(self):
+        """Test short requests without triggers are simple."""
+        assert is_complex_request("hello world how are you") is False
+
+
+class TestPlannerModels:
+    """Test the planner Pydantic models."""
+
+    def test_planned_command_creation(self):
+        """Test PlannedCommand model."""
+        cmd = PlannedCommand(
+            command="create test room",
+            description="Create a test room",
+            requires_confirm=False,
+        )
+        assert cmd.command == "create test room"
+        assert cmd.requires_confirm is False
+
+    def test_execution_plan_creation(self):
+        """Test ExecutionPlan model."""
+        plan = ExecutionPlan(
+            commands=[
+                PlannedCommand(command="rooms", description="List rooms"),
+                PlannedCommand(
+                    command="generate tool x y z",
+                    description="Generate tool",
+                    requires_confirm=True,
+                ),
+            ],
+            clarifications=[],
+            warnings=["Tool generation may take time"],
+        )
+        assert len(plan.commands) == 2
+        assert plan.commands[1].requires_confirm is True
+        assert len(plan.warnings) == 1
+
+    def test_execution_plan_with_clarifications(self):
+        """Test ExecutionPlan with clarifications."""
+        plan = ExecutionPlan(
+            commands=[],
+            clarifications=["Which room?", "What name?"],
+        )
+        assert len(plan.clarifications) == 2
+        assert len(plan.commands) == 0
+
+    def test_execution_plan_model_dump(self):
+        """Test ExecutionPlan serialization."""
+        plan = ExecutionPlan(
+            commands=[PlannedCommand(command="rooms", description="List")],
+        )
+        data = plan.model_dump()
+        assert "commands" in data
+        assert data["commands"][0]["command"] == "rooms"
+
+
+class TestPlanFormatters:
+    """Test plan formatting functions."""
+
+    def test_format_plan(self):
+        """Test format_plan output."""
+        from crazy_glue.analysis.formatters import format_plan
+
+        plan = ExecutionPlan(
+            commands=[
+                PlannedCommand(command="rooms", description="List all rooms"),
+                PlannedCommand(
+                    command="generate tool x y desc",
+                    description="Generate tool",
+                    requires_confirm=True,
+                ),
+            ],
+            warnings=["This may take time"],
+        )
+        output = format_plan(plan)
+        assert "## Execution Plan" in output
+        assert "List all rooms" in output
+        assert "Generate tool" in output
+        assert "⚠️" in output  # requires_confirm marker
+        assert "This may take time" in output
+        assert "Proceed?" in output
+
+    def test_format_clarifications(self):
+        """Test format_clarifications output."""
+        from crazy_glue.analysis.formatters import format_clarifications
+
+        plan = ExecutionPlan(
+            commands=[],
+            clarifications=["Which room?", "What tool name?"],
+        )
+        output = format_clarifications(plan)
+        assert "## Clarification Needed" in output
+        assert "Which room?" in output
+        assert "What tool name?" in output

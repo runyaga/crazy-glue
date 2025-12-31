@@ -280,3 +280,48 @@ def format_success(message: str) -> str:
 def format_warning(message: str) -> str:
     """Format warning message."""
     return f"## Warning\n\n{message}\n"
+
+
+def format_plan(plan) -> str:
+    """Format execution plan for display."""
+    from crazy_glue.analysis.planner import ExecutionPlan
+
+    if isinstance(plan, dict):
+        # Convert dict to ExecutionPlan if needed
+        plan = ExecutionPlan(**plan)
+
+    lines = ["## Execution Plan\n\n"]
+    lines.append("I'll execute these steps:\n\n")
+
+    for i, cmd in enumerate(plan.commands, 1):
+        confirm_marker = " ⚠️" if cmd.requires_confirm else ""
+        lines.append(f"{i}. **{cmd.description}**{confirm_marker}\n")
+        lines.append(f"   `{cmd.command}`\n\n")
+
+    if plan.warnings:
+        lines.append("**Notes:**\n")
+        for w in plan.warnings:
+            lines.append(f"- {w}\n")
+        lines.append("\n")
+
+    lines.append("Proceed? Reply **y** to execute, or describe changes.\n")
+
+    return "".join(lines)
+
+
+def format_clarifications(plan) -> str:
+    """Format clarification questions from planner."""
+    from crazy_glue.analysis.planner import ExecutionPlan
+
+    if isinstance(plan, dict):
+        plan = ExecutionPlan(**plan)
+
+    lines = ["## Clarification Needed\n\n"]
+    lines.append("I need more information:\n\n")
+
+    for i, q in enumerate(plan.clarifications, 1):
+        lines.append(f"{i}. {q}\n")
+
+    lines.append("\nPlease clarify and I'll create the plan.\n")
+
+    return "".join(lines)

@@ -34,6 +34,7 @@ class AnalysisContext:
     # Derived paths (set in __post_init__)
     project_root: Path = field(init=False)
     pending_tool_path: Path = field(init=False)
+    pending_plan_path: Path = field(init=False)
     managed_rooms_path: Path = field(init=False)
     prompts_path: Path = field(init=False)
     map_path: Path = field(init=False)
@@ -42,6 +43,7 @@ class AnalysisContext:
         self.project_root = _get_project_root()
         db_path = self.project_root / "db"
         self.pending_tool_path = db_path / "pending_tool.json"
+        self.pending_plan_path = db_path / "pending_plan.json"
         self.managed_rooms_path = db_path / "managed_rooms.json"
         self.prompts_path = db_path / "prompts.json"
 
@@ -112,3 +114,24 @@ class AnalysisContext:
         self.prompts_path.parent.mkdir(parents=True, exist_ok=True)
         data = {"prompts": prompts}
         self.prompts_path.write_text(json.dumps(data, indent=2))
+
+    # --- Pending Plan Storage ---
+
+    def load_pending_plan(self) -> dict | None:
+        """Load pending execution plan from staging file."""
+        if self.pending_plan_path.exists():
+            try:
+                return json.loads(self.pending_plan_path.read_text())
+            except (json.JSONDecodeError, KeyError):
+                return None
+        return None
+
+    def save_pending_plan(self, plan_data: dict) -> None:
+        """Save execution plan to staging file."""
+        self.pending_plan_path.parent.mkdir(parents=True, exist_ok=True)
+        self.pending_plan_path.write_text(json.dumps(plan_data, indent=2))
+
+    def clear_pending_plan(self) -> None:
+        """Clear pending execution plan."""
+        if self.pending_plan_path.exists():
+            self.pending_plan_path.unlink()

@@ -112,15 +112,24 @@ def get_room_editor(
     """
     from crazy_glue.analysis.room_editor import RoomConfigEditor
 
+    room_dir = None
+
+    # First check in-memory config (loaded rooms)
     room_cfg = ctx.installation_config.room_configs.get(room_id)
-    if not room_cfg:
+    if room_cfg:
+        config_path = getattr(room_cfg, "_config_path", None)
+        if config_path:
+            room_dir = Path(config_path).parent
+
+    # Fall back to filesystem for newly created rooms not yet loaded
+    if room_dir is None:
+        candidate = ctx.project_root / "rooms" / room_id
+        if candidate.exists() and (candidate / "room_config.yaml").exists():
+            room_dir = candidate
+
+    if room_dir is None:
         return None, f"Room `{room_id}` not found."
 
-    config_path = getattr(room_cfg, "_config_path", None)
-    if not config_path:
-        return None, f"Room `{room_id}` has no config path."
-
-    room_dir = Path(config_path).parent
     try:
         editor = RoomConfigEditor(room_dir)
     except Exception as e:

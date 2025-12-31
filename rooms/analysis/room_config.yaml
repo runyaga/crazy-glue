@@ -1,0 +1,37 @@
+id: "analysis"
+name: "System Architect"
+description: "Codebase navigator and room scaffolding agent powered by the Cartographer pattern"
+welcome_message: |
+  Welcome to the System Architect Room.
+
+  I can analyze the running soliplex installation and build a knowledge graph of the codebase.
+
+  **Commands:**
+  - `rooms` - List all registered rooms
+  - `managed` - List rooms created by architect
+  - `inspect <room-id>` - Inspect a room's configuration
+  - `refresh` - Scan codebase and build knowledge graph
+  - `find <name>` - Search for classes, functions, or modules
+  - `show joker|faux|brainstorm` - View reference implementations
+  - `create <name> room` - Create a new room
+
+suggestions:
+  - "rooms"
+  - "managed"
+  - "inspect brainstorm"
+  - "refresh the knowledge graph"
+  - "find BrainstormAgent"
+  - "show joker reference"
+  - "create Calculator room for doing math"
+
+agent:
+  kind: "factory"
+  factory_name: "crazy_glue.factories.analysis_factory.create_analysis_agent"
+  with_agent_config: true
+  extra_config:
+    map_path: "db/project_map.json"
+    roots:
+      - "src/crazy_glue"
+      - "rooms/"
+    max_depth: 5
+    max_files: 100

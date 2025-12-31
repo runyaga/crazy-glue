@@ -12,6 +12,9 @@ dependencies = [
     "soliplex @ git+https://github.com/soliplex/soliplex.git",
     "agentic-patterns @ git+https://github.com/runyaga/agentic-patterns-book.git",
     "httpx>=0.27",
+    "networkx>=3.0",
+    "tree-sitter>=0.25.0",
+    "tree-sitter-python>=0.25.0",
 ]
 
 [project.optional-dependencies]

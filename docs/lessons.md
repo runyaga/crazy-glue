@@ -871,6 +871,76 @@ agent:
 
 ---
 
+## Validating Room Configurations
+
+### Always Run `check-config` Before Finalizing
+
+**Critical Step**: After creating or modifying rooms, ALWAYS validate with:
+
+```bash
+soliplex-cli check-config ./installation.yaml
+```
+
+This catches configuration errors that Python syntax checks miss:
+- Invalid YAML structure
+- Missing required fields
+- Factory import failures
+- Incomplete room configs
+
+### Lesson: Test Artifacts Can Break Production
+
+**Problem Encountered**: A test (`test_apply_scaffold_allows_safe_paths`) wrote an
+incomplete room config file (`rooms/test/room_config.yaml`) with only `id` and `name`
+fields. This passed Python tests but broke the entire Soliplex installation:
+
+```
+FromYamlException: Error in YAML configuration:
+/Users/runyaga/dev/crazy-glue/rooms/test/room_config.yaml; Kind: room; Config:
+{'id': 'test', 'name': 'Test', ...};
+```
+
+**Root Cause**: The test actually wrote to the project directory instead of a temp
+directory, leaving behind an incomplete config that `soliplex-cli check-config`
+validates.
+
+**Fix**: Tests that generate files should either:
+1. Use `tempfile.TemporaryDirectory()` and write there
+2. Clean up after themselves
+3. Only test path validation logic without actual file writes
+
+```python
+# WRONG: Writes to project directory
+def test_apply_scaffold(self, analysis_agent):
+    safe_files = {"rooms/test/room_config.yaml": "id: test\nname: Test"}
+    result = analysis_agent._apply_scaffold(safe_files)  # Writes to rooms/
+
+# RIGHT: Test path filtering logic only
+def test_apply_scaffold_allows_safe_paths(self, analysis_agent):
+    safe_files = {"rooms/test-temp/room_config.yaml": "..."}
+    allowed = ["rooms/", "src/crazy_glue/factories/"]
+    for path in safe_files:
+        assert any(path.startswith(p) for p in allowed)  # No file write
+```
+
+### Room Config Minimum Required Fields
+
+A valid `room_config.yaml` requires at minimum:
+
+```yaml
+id: "my-room"
+name: "My Room Name"
+description: "What this room does"
+welcome_message: |
+  Welcome text
+
+agent:
+  kind: "default"  # or "factory"
+```
+
+Missing `description`, `welcome_message`, or `agent` block will fail validation.
+
+---
+
 ## Future Improvements
 
 1. Fix `compute_state_delta` to use `add` for new keys instead of `replace`
@@ -881,3 +951,4 @@ agent:
 6. Add real-time tool call streaming via `agent.iter()` support
 7. Provide public accessor for `_installation_config` (currently private API)
 8. Consider adding model tier configs at installation level for common defaults
+9. Add `soliplex-cli check-config` to CI pipeline to catch invalid rooms early

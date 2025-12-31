@@ -21,6 +21,10 @@ agent_configs:
 room_paths:
   - "./rooms"
 
+#disabled auth
+oidc_paths:
+  -
+
 thread_persistence_dburi:
   sync: "sqlite://"
   async: "sqlite+aiosqlite://"

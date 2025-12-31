@@ -295,16 +295,24 @@ class TestRoomConfigEditor:
 
     def test_mark_as_managed(self):
         """Test marking a room as managed."""
+        import uuid
+
+        # Use unique room ID to avoid conflicts with persistent tracking
+        unique_id = f"test-{uuid.uuid4().hex[:8]}"
+
         with tempfile.TemporaryDirectory() as tmpdir:
             room_dir = Path(tmpdir)
             config_path = room_dir / "room_config.yaml"
-            config_path.write_text("id: test\nname: Test")
+            config_path.write_text(f"id: {unique_id}\nname: Test")
 
             editor = RoomConfigEditor(room_dir)
             assert editor.is_managed() is False
 
             editor.mark_as_managed()
             assert editor.is_managed() is True
+
+            # Clean up: unmark to avoid polluting tracking file
+            editor.unmark_as_managed()
 
     def test_save_persists_changes(self):
         """Test save writes changes to disk."""

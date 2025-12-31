@@ -181,6 +181,133 @@ class AnalysisAgent:
 
         return sorted(managed, key=lambda r: r["id"])
 
+    def _get_room_editor(
+        self, room_id: str, require_managed: bool = True
+    ) -> tuple[RoomConfigEditor | None, str | None]:
+        """Get a RoomConfigEditor for a room.
+
+        Args:
+            room_id: The room ID to get editor for
+            require_managed: If True, only allow editing managed rooms
+
+        Returns:
+            Tuple of (editor, error_message). Editor is None if error.
+        """
+        room_cfg = self.installation.room_configs.get(room_id)
+        if not room_cfg:
+            return None, f"Room `{room_id}` not found."
+
+        config_path = getattr(room_cfg, "_config_path", None)
+        if not config_path:
+            return None, f"Room `{room_id}` has no config path."
+
+        room_dir = Path(config_path).parent
+        try:
+            editor = RoomConfigEditor(room_dir)
+        except Exception as e:
+            return None, f"Failed to load room config: {e}"
+
+        if require_managed and not editor.is_managed():
+            return None, (
+                f"Room `{room_id}` is not managed by the architect.\n"
+                "Only rooms created with `create <name> room` can be edited."
+            )
+
+        return editor, None
+
+    def _edit_room(
+        self,
+        room_id: str,
+        field: str,
+        value: str,
+    ) -> dict:
+        """Edit a room's configuration field.
+
+        Args:
+            room_id: The room to edit
+            field: Field to edit (description, prompt, model, welcome)
+            value: New value for the field
+
+        Returns:
+            Dict with status and any errors.
+        """
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        field_map = {
+            "description": editor.set_description,
+            "prompt": editor.set_system_prompt,
+            "model": editor.set_model_name,
+            "welcome": editor.set_welcome_message,
+        }
+
+        if field not in field_map:
+            valid = ", ".join(field_map.keys())
+            msg = f"Unknown field: {field}. Valid: {valid}"
+            return {"status": "error", "message": msg}
+
+        try:
+            field_map[field](value)
+            editor.save()
+
+            # Validate after save
+            errors = editor.validate()
+            if errors:
+                return {
+                    "status": "warning",
+                    "message": f"Saved but validation issues: {errors}",
+                }
+
+            msg = f"Updated {field} for {room_id}"
+            return {"status": "success", "message": msg}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to update: {e}"}
+
+    def _manage_suggestion(
+        self,
+        room_id: str,
+        action: str,
+        value: str | int,
+    ) -> dict:
+        """Add or remove a suggestion from a room.
+
+        Args:
+            room_id: The room to modify
+            action: "add" or "remove"
+            value: Text to add, or index to remove
+
+        Returns:
+            Dict with status and any errors.
+        """
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        try:
+            if action == "add":
+                editor.add_suggestion(str(value))
+                editor.save()
+                msg = f"Added suggestion to {room_id}"
+                return {"status": "success", "message": msg}
+            elif action == "remove":
+                idx = int(value)
+                if editor.remove_suggestion(idx):
+                    editor.save()
+                    msg = f"Removed suggestion {idx}"
+                    return {"status": "success", "message": msg}
+                else:
+                    msg = f"Invalid index: {idx}"
+                    return {"status": "error", "message": msg}
+            else:
+                msg = f"Unknown action: {action}"
+                return {"status": "error", "message": msg}
+        except ValueError:
+            msg = "Remove requires a numeric index"
+            return {"status": "error", "message": msg}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed: {e}"}
+
     def _inspect_room(self, room_id: str) -> dict | None:
         """Get detailed info about a specific room."""
         room_cfg = self.installation.room_configs.get(room_id)
@@ -647,6 +774,81 @@ agent:
                 hint = "Create a room with `create <name> room` to manage it."
                 response_parts.append(f"*{hint}*\n")
 
+        elif prompt_lower.startswith("edit "):
+            # Parse: edit <room-id> <field> <value>
+            parts = user_prompt.split(maxsplit=3)
+            if len(parts) < 4:
+                response_parts.append("## Edit Room\n\n")
+                usage = "Usage: `edit <room-id> <field> <value>`\n\n"
+                response_parts.append(usage)
+                response_parts.append("**Fields:**\n")
+                response_parts.append("- `description` - Room description\n")
+                response_parts.append("- `prompt` - System prompt\n")
+                response_parts.append("- `model` - LLM model name\n")
+                response_parts.append("- `welcome` - Welcome message\n")
+            else:
+                _, room_id, field, value = parts
+                delta = f"\nEditing {room_id} {field}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._edit_room(room_id, field.lower(), value)
+                if result["status"] == "success":
+                    response_parts.append(f"## Updated {room_id}\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart_msg = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart_msg)
+                elif result["status"] == "warning":
+                    warn_msg = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn_msg)
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
+        elif "add suggestion" in prompt_lower:
+            # Parse: add suggestion <room-id> <text>
+            parts = user_prompt.split(maxsplit=3)
+            if len(parts) < 4:
+                usage = "Usage: `add suggestion <room-id> <text>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                text = parts[3]
+                delta = f"\nAdding suggestion to {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_suggestion(room_id, "add", text)
+                if result["status"] == "success":
+                    response_parts.append("## Added Suggestion\n\n")
+                    added_msg = f"Added to `{room_id}`: \"{text}\"\n"
+                    response_parts.append(added_msg)
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
+        elif "remove suggestion" in prompt_lower:
+            # Parse: remove suggestion <room-id> <index>
+            parts = user_prompt.split()
+            if len(parts) < 4:
+                usage = "Usage: `remove suggestion <room-id> <index>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                index = parts[3]
+                delta = f"\nRemoving suggestion {index} from {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_suggestion(room_id, "remove", index)
+                if result["status"] == "success":
+                    response_parts.append("## Removed Suggestion\n\n")
+                    removed = f"Removed suggestion {index} from `{room_id}`\n"
+                    response_parts.append(removed)
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
         elif "inspect" in prompt_lower:
             # Extract room id from prompt
             words = user_prompt.split()
@@ -774,14 +976,19 @@ agent:
         else:
             header = f"## System Architect\n\n{SYSTEM_PROMPT}\n\n"
             response_parts.append(header)
-            response_parts.append("**Try these commands:**\n")
+            response_parts.append("**Introspection:**\n")
             response_parts.append("- `rooms` - List registered rooms\n")
             response_parts.append("- `managed` - List managed rooms\n")
-            response_parts.append("- `inspect <id>` - Inspect a room\n")
-            response_parts.append("- `refresh` - Scan and build graph\n")
-            response_parts.append("- `find <name>` - Search entities\n")
-            response_parts.append("- `show joker` - View reference\n")
+            response_parts.append("- `inspect <id>` - Inspect a room\n\n")
+            response_parts.append("**Room Management:**\n")
             response_parts.append("- `create <name> room` - Create room\n")
+            response_parts.append("- `edit <id> <field> <val>` - Edit room\n")
+            response_parts.append("- `add suggestion <id> <text>`\n")
+            response_parts.append("- `remove suggestion <id> <idx>`\n\n")
+            response_parts.append("**Codebase Analysis:**\n")
+            response_parts.append("- `refresh` - Build knowledge graph\n")
+            response_parts.append("- `find <name>` - Search entities\n")
+            response_parts.append("- `show joker|faux|brainstorm` - Refs\n")
 
         if emitter:
             emitter.update_activity("analysis", {

@@ -10,10 +10,13 @@ welcome_message: |
   - `rooms` - List all registered rooms
   - `managed` - List rooms created by architect
   - `inspect <room-id>` - Inspect a room's configuration
+  - `create <name> room` - Create a new room
+  - `edit <room-id> <field> <value>` - Edit room config
+  - `add suggestion <room-id> <text>` - Add suggestion
+  - `remove suggestion <room-id> <idx>` - Remove suggestion
   - `refresh` - Scan codebase and build knowledge graph
   - `find <name>` - Search for classes, functions, or modules
   - `show joker|faux|brainstorm` - View reference implementations
-  - `create <name> room` - Create a new room
 
 suggestions:
   - "rooms"

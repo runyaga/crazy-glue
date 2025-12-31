@@ -14,6 +14,9 @@ welcome_message: |
   - `edit <room-id> <field> <value>` - Edit room config
   - `add suggestion <room-id> <text>` - Add suggestion
   - `remove suggestion <room-id> <idx>` - Remove suggestion
+  - `list tools` - Show available tools
+  - `add tool <room-id> <tool-name>` - Add tool
+  - `remove tool <room-id> <tool-name>` - Remove tool
   - `refresh` - Scan codebase and build knowledge graph
   - `find <name>` - Search for classes, functions, or modules
   - `show joker|faux|brainstorm` - View reference implementations

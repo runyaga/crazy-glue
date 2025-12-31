@@ -308,6 +308,91 @@ class AnalysisAgent:
         except Exception as e:
             return {"status": "error", "message": f"Failed: {e}"}
 
+    # Available tool types for rooms
+    AVAILABLE_TOOLS = {
+        "soliplex.tools.search_documents": {
+            "description": "RAG document search",
+            "requires": "rag_lancedb_stem config",
+        },
+        "soliplex.tools.research_report": {
+            "description": "RAG research report generation",
+            "requires": "rag_lancedb_stem config",
+        },
+        "soliplex.tools.ask_with_rich_citations": {
+            "description": "RAG Q&A with citations",
+            "requires": "rag_lancedb_stem config",
+        },
+    }
+
+    def _list_available_tools(self) -> list[dict]:
+        """List available tool types that can be added to rooms."""
+        tools = []
+        for name, info in self.AVAILABLE_TOOLS.items():
+            tools.append({
+                "name": name,
+                "description": info["description"],
+                "requires": info["requires"],
+            })
+        return tools
+
+    def _manage_tool(
+        self,
+        room_id: str,
+        action: str,
+        tool_name: str,
+    ) -> dict:
+        """Add or remove a tool from a room.
+
+        Args:
+            room_id: The room to modify
+            action: "add" or "remove"
+            tool_name: Tool name to add/remove
+
+        Returns:
+            Dict with status and any errors.
+        """
+        editor, error = self._get_room_editor(room_id, require_managed=True)
+        if error:
+            return {"status": "error", "message": error}
+
+        try:
+            if action == "add":
+                # Validate tool name
+                if tool_name not in self.AVAILABLE_TOOLS:
+                    avail = ", ".join(self.AVAILABLE_TOOLS.keys())
+                    msg = f"Unknown tool: {tool_name}. Available: {avail}"
+                    return {"status": "error", "message": msg}
+
+                editor.add_tool(tool_name)
+                editor.save()
+
+                # Validate
+                errors = editor.validate()
+                if errors:
+                    return {
+                        "status": "warning",
+                        "message": f"Added but validation issues: {errors}",
+                    }
+
+                msg = f"Added {tool_name} to {room_id}"
+                return {"status": "success", "message": msg}
+
+            elif action == "remove":
+                if editor.remove_tool(tool_name):
+                    editor.save()
+                    msg = f"Removed {tool_name} from {room_id}"
+                    return {"status": "success", "message": msg}
+                else:
+                    msg = f"Tool {tool_name} not found in {room_id}"
+                    return {"status": "error", "message": msg}
+
+            else:
+                msg = f"Unknown action: {action}"
+                return {"status": "error", "message": msg}
+
+        except Exception as e:
+            return {"status": "error", "message": f"Failed: {e}"}
+
     def _inspect_room(self, room_id: str) -> dict | None:
         """Get detailed info about a specific room."""
         room_cfg = self.installation.room_configs.get(room_id)
@@ -849,6 +934,66 @@ agent:
                 else:
                     response_parts.append(f"## Error\n\n{result['message']}\n")
 
+        elif prompt_lower == "list tools":
+            delta = "\nListing available tools..."
+            think_part.content += delta
+            tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+            yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+            tools = self._list_available_tools()
+            response_parts.append("## Available Tools\n\n")
+            for t in tools:
+                response_parts.append(f"### `{t['name']}`\n")
+                response_parts.append(f"- {t['description']}\n")
+                response_parts.append(f"- Requires: {t['requires']}\n\n")
+
+        elif "add tool" in prompt_lower:
+            # Parse: add tool <room-id> <tool-name>
+            parts = user_prompt.split()
+            if len(parts) < 4:
+                usage = "Usage: `add tool <room-id> <tool-name>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                tool_name = parts[3]
+                delta = f"\nAdding {tool_name} to {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_tool(room_id, "add", tool_name)
+                if result["status"] == "success":
+                    response_parts.append("## Added Tool\n\n")
+                    response_parts.append(f"{result['message']}\n\n")
+                    restart = "Restart soliplex to apply changes.\n"
+                    response_parts.append(restart)
+                elif result["status"] == "warning":
+                    warn = f"## Warning\n\n{result['message']}\n"
+                    response_parts.append(warn)
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
+        elif "remove tool" in prompt_lower:
+            # Parse: remove tool <room-id> <tool-name>
+            parts = user_prompt.split()
+            if len(parts) < 4:
+                usage = "Usage: `remove tool <room-id> <tool-name>`\n"
+                response_parts.append(usage)
+            else:
+                room_id = parts[2]
+                tool_name = parts[3]
+                delta = f"\nRemoving {tool_name} from {room_id}..."
+                think_part.content += delta
+                tdelta = ai_messages.ThinkingPartDelta(content_delta=delta)
+                yield ai_messages.PartDeltaEvent(index=0, delta=tdelta)
+
+                result = self._manage_tool(room_id, "remove", tool_name)
+                if result["status"] == "success":
+                    response_parts.append("## Removed Tool\n\n")
+                    response_parts.append(f"{result['message']}\n")
+                else:
+                    response_parts.append(f"## Error\n\n{result['message']}\n")
+
         elif "inspect" in prompt_lower:
             # Extract room id from prompt
             words = user_prompt.split()
@@ -985,6 +1130,10 @@ agent:
             response_parts.append("- `edit <id> <field> <val>` - Edit room\n")
             response_parts.append("- `add suggestion <id> <text>`\n")
             response_parts.append("- `remove suggestion <id> <idx>`\n\n")
+            response_parts.append("**Tool Management:**\n")
+            response_parts.append("- `list tools` - Show available tools\n")
+            response_parts.append("- `add tool <id> <tool-name>`\n")
+            response_parts.append("- `remove tool <id> <tool-name>`\n\n")
             response_parts.append("**Codebase Analysis:**\n")
             response_parts.append("- `refresh` - Build knowledge graph\n")
             response_parts.append("- `find <name>` - Search entities\n")
